@@ -1,120 +1,306 @@
 <div align="center">
 
-<h1>zigantic</h1>
+<h1>🦎 zigantic</h1>
 
-<a href="https://muhammad-fiaz.github.io/zigantic/"><img src="https://img.shields.io/badge/docs-muhammad--fiaz.github.io-blue" alt="Documentation"></a>
-<a href="https://ziglang.org/"><img src="https://img.shields.io/badge/Zig-0.15.0-orange.svg?logo=zig" alt="Zig Version"></a>
+<p><strong>Pydantic-like data validation and JSON serialization for Zig</strong></p>
+
+<a href="https://muhammad-fiaz.github.io/zigantic/"><img src="https://img.shields.io/badge/📚_docs-muhammad--fiaz.github.io-blue" alt="Documentation"></a>
+<a href="https://ziglang.org/"><img src="https://img.shields.io/badge/Zig-0.15.0+-orange.svg?logo=zig" alt="Zig Version"></a>
+<a href="https://github.com/muhammad-fiaz/zigantic/actions/workflows/ci.yml"><img src="https://github.com/muhammad-fiaz/zigantic/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://github.com/muhammad-fiaz/zigantic"><img src="https://img.shields.io/github/stars/muhammad-fiaz/zigantic" alt="GitHub stars"></a>
 <a href="https://github.com/muhammad-fiaz/zigantic/issues"><img src="https://img.shields.io/github/issues/muhammad-fiaz/zigantic" alt="GitHub issues"></a>
 <a href="https://github.com/muhammad-fiaz/zigantic"><img src="https://img.shields.io/github/license/muhammad-fiaz/zigantic" alt="License"></a>
-<a href="https://github.com/muhammad-fiaz/zigantic/actions/workflows/ci.yml"><img src="https://github.com/muhammad-fiaz/zigantic/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<br>
 <img src="https://img.shields.io/badge/platforms-linux%20%7C%20windows%20%7C%20macos-blue" alt="Supported Platforms">
 <img src="https://img.shields.io/badge/tests-102%20passing-brightgreen" alt="Tests">
+<img src="https://img.shields.io/badge/types-40+-purple" alt="Types">
 
-<p><em>Pydantic-like data validation and serialization for Zig.</em></p>
+<br><br>
 
-<b>📚 <a href="https://muhammad-fiaz.github.io/zigantic/">Documentation</a> |
-<a href="https://muhammad-fiaz.github.io/zigantic/api/types">API Reference</a> |
-<a href="https://muhammad-fiaz.github.io/zigantic/guide/quick-start">Quick Start</a></b>
+**[📚 Documentation](https://muhammad-fiaz.github.io/zigantic/)** •
+**[🚀 Quick Start](https://muhammad-fiaz.github.io/zigantic/guide/quick-start)** •
+**[📖 API Reference](https://muhammad-fiaz.github.io/zigantic/api/types)**
 
 </div>
 
 ---
 
-> **If you understand Zig structs, you already understand zigantic.**
 
-## Features
+zigantic brings Pydantic-style data validation to Zig, using the type system for compile-time guarantees. Define validation rules as types, parse JSON with automatic error handling, and serialize with zero runtime overhead for unused features.
 
-- ⚡ **Compile-Time Driven** - Validation as types
-- 🦎 **Idiomatic Zig** - No DSLs, no macros
-- 📝 **Human-Readable Errors** - Field-aware messages with error codes
-- 🚀 **Zero Overhead** - Unused features cost nothing
-- ✅ **102 Tests** - Comprehensive test coverage
+## ✨ Features
 
-## Installation
+| Feature                      | Description                                                         |
+| ---------------------------- | ------------------------------------------------------------------- |
+| ⚡ **Compile-Time Driven**   | Validation logic is types. Constraints are checked at compile time. |
+| 🦎 **Idiomatic Zig**         | No macros, no DSLs, no magic. Just types and functions.             |
+| 📝 **Human-Readable Errors** | Field-aware messages with error codes (E001, E010, etc.)            |
+| 🚀 **Zero Overhead**         | Unused features have zero runtime cost.                             |
+| 🔒 **40+ Built-in Types**    | Strings, numbers, formats, collections with rich utilities.         |
+| 🔄 **JSON Parsing**          | Parse and serialize JSON with automatic validation.                 |
+| ✅ **102 Tests**             | Comprehensive test coverage for reliability.                        |
+
+## 📦 Installation
+
+### Using Zig Package Manager
 
 ```bash
 zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/v0.0.1.tar.gz
 ```
 
-In `build.zig`:
+### Configure build.zig
 
 ```zig
-const zigantic = b.dependency("zigantic", .{
-    .target = target,
-    .optimize = optimize,
-});
-exe.root_module.addImport("zigantic", zigantic.module("zigantic"));
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const zigantic = b.dependency("zigantic", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "my-app",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.root_module.addImport("zigantic", zigantic.module("zigantic"));
+    b.installArtifact(exe);
+}
 ```
 
-## Quick Start
+## 🚀 Quick Start
+
+### Direct Validation
 
 ```zig
+const std = @import("std");
 const z = @import("zigantic");
 
-// Direct validation
-const name = try z.String(1, 50).init("Alice");
-const age = try z.PositiveInt(i32).init(25);
-const email = try z.Email.init("alice@example.com");
+pub fn main() !void {
+    // String with length constraints
+    const name = try z.String(1, 50).init("Alice");
+    std.debug.print("Name: {s} (len: {d})\n", .{name.get(), name.len()});
 
-std.debug.print("Name: {s}, Domain: {s}\n", .{name.get(), email.domain()});
+    // Email with domain parsing
+    const email = try z.Email.init("alice@company.com");
+    std.debug.print("Email: {s}\n", .{email.get()});
+    std.debug.print("Domain: {s}\n", .{email.domain()});
+    std.debug.print("Business email: {}\n", .{email.isBusinessEmail()});
 
-// Strong password with strength check
-const pwd = try z.Secret(8, 100).init("MyP@ss123");
-std.debug.print("Strength: {d}/6\n", .{pwd.strength()});
+    // Password with strength checking
+    const pwd = try z.Secret(8, 100).init("MyP@ssw0rd!");
+    std.debug.print("Password: {s}\n", .{pwd.masked()});
+    std.debug.print("Strength: {d}/6\n", .{pwd.strength()});
 
-// JSON parsing with validation
-const User = struct {
-    name: z.String(1, 50),
-    age: z.Int(i32, 18, 120),
-    role: z.Default([]const u8, "user"),
-};
+    // Integer with range and utilities
+    const age = try z.Int(i32, 18, 120).init(25);
+    std.debug.print("Age: {d} (even: {}, positive: {})\n", .{
+        age.get(), age.isEven(), age.isPositive()
+    });
 
-var result = try z.fromJson(User, json, allocator);
-defer result.deinit();
+    // IP address with network utilities
+    const ip = try z.Ipv4.init("192.168.1.1");
+    std.debug.print("IP: {s} (private: {})\n", .{ip.get(), ip.isPrivate()});
+}
 ```
 
-## All Types
-
-| Category       | Types                                                                                                                                                                                   |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **String**     | `String`, `NonEmptyString`, `Trimmed`, `Lowercase`, `Uppercase`, `Alphanumeric`, `AsciiString`, `Secret`, `StrongPassword`                                                              |
-| **Number**     | `Int`, `UInt`, `PositiveInt`, `NonNegativeInt`, `NegativeInt`, `EvenInt`, `OddInt`, `MultipleOf`, `Float`, `Percentage`, `Probability`, `PositiveFloat`, `NegativeFloat`, `FiniteFloat` |
-| **Format**     | `Email`, `Url`, `HttpsUrl`, `Uuid`, `Ipv4`, `Ipv6`, `Slug`, `Semver`, `PhoneNumber`, `CreditCard`, `Regex`                                                                              |
-| **Collection** | `List`, `NonEmptyList`, `FixedList`                                                                                                                                                     |
-| **Special**    | `Default`, `Custom`, `Transform`, `Coerce`, `Literal`, `Partial`, `OneOf`, `Range`, `Nullable`, `Lazy`                                                                                  |
-
-## Type Features
+### JSON Parsing with Validation
 
 ```zig
-// Password strength
-const pwd = try z.Secret(8, 100).init("MyP@ss123");
-pwd.strength()      // 0-6 score
-pwd.hasUppercase()  // true
-pwd.hasDigit()      // true
+const std = @import("std");
+const z = @import("zigantic");
 
-// Email parsing
-const email = try z.Email.init("user@company.com");
-email.domain()         // "company.com"
-email.isBusinessEmail() // true (not gmail/yahoo)
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-// IP utilities
-const ip = try z.Ipv4.init("192.168.1.1");
-ip.isPrivate()  // true
-ip.isLoopback() // false
+    // Define a validated struct
+    const User = struct {
+        id: z.PositiveInt(u32),
+        name: z.String(1, 50),
+        age: z.Int(i32, 18, 120),
+        email: z.Email,
+        role: z.Default([]const u8, "user"),
+        website: ?z.Url = null,
+    };
 
-// Credit card
-const card = try z.CreditCard.init("4111111111111111");
-card.cardType() // "visa"
-card.masked()   // "1111"
+    const json =
+        \\{"id": 1, "name": "Alice", "age": 25, "email": "alice@example.com"}
+    ;
 
-// Number utilities
-const n = try z.Int(i32, -100, 100).init(42);
-n.isEven()   // true
-n.clamp(0, 50) // 42
+    var result = try z.fromJson(User, json, allocator);
+    defer result.deinit();
+
+    if (result.value) |user| {
+        std.debug.print("Welcome, {s}!\n", .{user.name.get()});
+        std.debug.print("Role: {s} (default)\n", .{user.role.get()});
+    }
+
+    if (!result.isValid()) {
+        for (result.error_list.errors.items) |err| {
+            std.debug.print("[{s}] {s}: {s}\n", .{
+                z.errorCode(err.error_type),
+                err.field,
+                err.message,
+            });
+        }
+    }
+}
 ```
 
-## Error Handling
+## 📚 All Types
+
+### String Types (9)
+
+| Type                       | Description                        | Example                  |
+| -------------------------- | ---------------------------------- | ------------------------ |
+| `String(min, max)`         | Length-constrained string          | `String(1, 50)`          |
+| `NonEmptyString(max)`      | Non-empty string                   | `NonEmptyString(100)`    |
+| `Trimmed(min, max)`        | Auto-trim whitespace               | `Trimmed(1, 50)`         |
+| `Lowercase(max)`           | Lowercase only                     | `Lowercase(50)`          |
+| `Uppercase(max)`           | Uppercase only                     | `Uppercase(50)`          |
+| `Alphanumeric(min, max)`   | Letters and digits                 | `Alphanumeric(1, 20)`    |
+| `AsciiString(min, max)`    | ASCII only (0-127)                 | `AsciiString(1, 100)`    |
+| `Secret(min, max)`         | Password with strength             | `Secret(8, 100)`         |
+| `StrongPassword(min, max)` | Requires upper+lower+digit+special | `StrongPassword(8, 100)` |
+
+**String Methods:**
+
+```zig
+str.get()           // Get value
+str.len()           // Length
+str.isEmpty()       // Check empty
+str.startsWith("A") // Prefix check
+str.endsWith("z")   // Suffix check
+str.contains("bc")  // Contains check
+str.charAt(0)       // Character at index
+str.slice(0, 5)     // Substring
+
+// Secret-specific
+pwd.masked()        // "********"
+pwd.strength()      // 0-6 score
+pwd.hasUppercase()  // bool
+pwd.hasLowercase()  // bool
+pwd.hasDigit()      // bool
+pwd.hasSpecial()    // bool
+```
+
+### Number Types (14)
+
+| Type                     | Description            | Example                |
+| ------------------------ | ---------------------- | ---------------------- |
+| `Int(T, min, max)`       | Signed integer range   | `Int(i32, 0, 100)`     |
+| `UInt(T, min, max)`      | Unsigned integer range | `UInt(u32, 1, 1000)`   |
+| `PositiveInt(T)`         | > 0                    | `PositiveInt(i32)`     |
+| `NonNegativeInt(T)`      | >= 0                   | `NonNegativeInt(i32)`  |
+| `NegativeInt(T)`         | < 0                    | `NegativeInt(i32)`     |
+| `EvenInt(T, min, max)`   | Even numbers only      | `EvenInt(i32, 0, 100)` |
+| `OddInt(T, min, max)`    | Odd numbers only       | `OddInt(i32, 1, 99)`   |
+| `MultipleOf(T, divisor)` | Must be multiple of N  | `MultipleOf(i32, 5)`   |
+| `Float(T, min, max)`     | Float range            | `Float(f64, 0.0, 1.0)` |
+| `Percentage(T)`          | 0-100                  | `Percentage(f64)`      |
+| `Probability(T)`         | 0-1                    | `Probability(f64)`     |
+| `PositiveFloat(T)`       | > 0                    | `PositiveFloat(f64)`   |
+| `NegativeFloat(T)`       | < 0                    | `NegativeFloat(f64)`   |
+| `FiniteFloat(T)`         | No NaN/Infinity        | `FiniteFloat(f64)`     |
+
+**Number Methods:**
+
+```zig
+n.get()          // Get value
+n.isPositive()   // > 0
+n.isNegative()   // < 0
+n.isZero()       // == 0
+n.isEven()       // Even check
+n.isOdd()        // Odd check
+n.abs()          // Absolute value
+n.clamp(0, 50)   // Clamp to range
+
+// Float-specific
+f.floor()        // Floor
+f.ceil()         // Ceiling
+f.round()        // Round
+f.trunc()        // Truncate
+```
+
+### Format Types (11)
+
+| Type             | Description        | Methods                                        |
+| ---------------- | ------------------ | ---------------------------------------------- |
+| `Email`          | Email address      | `domain()`, `localPart()`, `isBusinessEmail()` |
+| `Url`            | HTTP/HTTPS URL     | `isHttps()`, `protocol()`, `host()`            |
+| `HttpsUrl`       | HTTPS only         | -                                              |
+| `Uuid`           | UUID format        | `version()`                                    |
+| `Ipv4`           | IPv4 address       | `isPrivate()`, `isLoopback()`                  |
+| `Ipv6`           | IPv6 address       | `isLoopback()`                                 |
+| `Slug`           | URL slug           | -                                              |
+| `Semver`         | Semantic version   | -                                              |
+| `PhoneNumber`    | Phone number       | `hasCountryCode()`                             |
+| `CreditCard`     | Credit card (Luhn) | `cardType()`, `masked()`                       |
+| `Regex(pattern)` | Pattern matching   | -                                              |
+
+### Collection Types (3)
+
+| Type                   | Description      | Methods                               |
+| ---------------------- | ---------------- | ------------------------------------- |
+| `List(T, min, max)`    | List with length | `len()`, `first()`, `last()`, `at(i)` |
+| `NonEmptyList(T, max)` | Non-empty list   | Same as List                          |
+| `FixedList(T, len)`    | Exact size       | `at(i)`                               |
+
+### Special Types (10)
+
+| Type                   | Description         | Methods                         |
+| ---------------------- | ------------------- | ------------------------------- |
+| `Default(T, value)`    | Default value       | `isDefault()`, `getOrDefault()` |
+| `Custom(T, fn)`        | Custom validator    | -                               |
+| `Transform(T, fn)`     | Transform value     | `getOriginal()`                 |
+| `Coerce(From, To)`     | Type conversion     | -                               |
+| `Literal(T, value)`    | Exact value match   | -                               |
+| `Partial(T)`           | All fields optional | -                               |
+| `OneOf(T, values)`     | Allowed values      | `isFirst()`, `isLast()`         |
+| `Range(T, s, e, step)` | Range with step     | -                               |
+| `Nullable(T)`          | Explicit null       | `isNull()`, `unwrapOr()`        |
+| `Lazy(T)`              | Lazy evaluation     | `isComputed()`, `reset()`       |
+
+## 🔧 Validators
+
+Direct validation functions without types:
+
+```zig
+const v = z.validators;
+
+// Format validators
+v.isValidEmail("user@example.com")     // true
+v.isValidUrl("https://example.com")    // true
+v.isUuid("550e8400-...")               // true
+v.isIpv4("192.168.1.1")                // true
+v.isIpv6("::1")                        // true
+v.isSlug("hello-world")                // true
+v.isSemver("1.2.3")                    // true
+v.isPhoneNumber("+1234567890")         // true
+v.isJwt("header.payload.signature")    // true
+v.isValidCreditCard("4111...")         // true
+
+// String validators
+v.isAlphanumeric("abc123")             // true
+v.isAlpha("hello")                     // true
+v.isNumeric("12345")                   // true
+v.isLowercase("hello")                 // true
+v.isUppercase("HELLO")                 // true
+v.isHexString("0123abcdef")            // true
+
+// Pattern matching
+v.matchesPattern("[0-9][0-9][0-9]", "123")  // true
+```
+
+## ❌ Error Handling
 
 ```zig
 // Error messages and codes
@@ -125,21 +311,44 @@ if (z.String(3, 50).init("Jo")) |_| {} else |err| {
 
 // ErrorList for collecting multiple errors
 var errors = z.errors.ErrorList.init(allocator);
+defer errors.deinit();
+
 try errors.add("name", error.TooShort, "too short", "Jo");
-errors.toJsonArray(allocator)  // JSON output
+errors.count()           // 1
+errors.containsField("name")  // true
+
+// JSON output
+const json = try errors.toJsonArray(allocator);
+// [{"field":"name","message":"too short","value":"Jo"}]
 ```
 
-## Examples
+### Error Codes
+
+| Code | Error                  | Message               |
+| ---- | ---------------------- | --------------------- |
+| E001 | TooShort               | value is too short    |
+| E002 | TooLong                | value is too long     |
+| E003 | TooSmall               | value is too small    |
+| E004 | TooLarge               | value is too large    |
+| E010 | InvalidEmail           | must be a valid email |
+| E011 | InvalidUrl             | must be a valid URL   |
+| E020 | MissingField           | field is required     |
+| E021 | TypeMismatch           | wrong type            |
+| E099 | CustomValidationFailed | validation failed     |
+
+## 🏃 Examples
+
+The library includes 5 comprehensive examples:
 
 ```bash
 zig build run-basic           # Direct validation + JSON
-zig build run-advanced_types  # All 40+ types demos
+zig build run-advanced_types  # All 40+ types demo
 zig build run-validators      # Validator functions
 zig build run-json_example    # Full JSON workflow
 zig build run-error_handling  # Error management
 ```
 
-## Building
+## 🔨 Building
 
 ```bash
 zig build            # Build library
@@ -147,6 +356,15 @@ zig build test       # Run 102 tests
 zig build example    # Run basic example
 ```
 
-## License
+## 📄 License
 
 MIT License - Copyright (c) 2025 Muhammad Fiaz
+
+---
+
+<div align="center">
+  <p>Made with ❤️ for the Zig community</p>
+  <a href="https://github.com/muhammad-fiaz/zigantic/stargazers">⭐ Star this repo</a> •
+  <a href="https://github.com/muhammad-fiaz/zigantic/issues">🐛 Report Bug</a> •
+  <a href="https://github.com/muhammad-fiaz/zigantic/issues">💡 Request Feature</a>
+</div>
