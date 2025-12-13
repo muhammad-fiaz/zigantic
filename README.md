@@ -1,30 +1,31 @@
 <div align="center">
 
-<h1>🦎 zigantic</h1>
+# 🦎 zigantic
 
-<p><strong>Pydantic-like data validation and JSON serialization for Zig</strong></p>
-
-<a href="https://muhammad-fiaz.github.io/zigantic/"><img src="https://img.shields.io/badge/📚_docs-muhammad--fiaz.github.io-blue" alt="Documentation"></a>
+<a href="https://muhammad-fiaz.github.io/zigantic/"><img src="https://img.shields.io/badge/docs-muhammad--fiaz.github.io-blue" alt="Documentation"></a>
 <a href="https://ziglang.org/"><img src="https://img.shields.io/badge/Zig-0.15.0+-orange.svg?logo=zig" alt="Zig Version"></a>
-<a href="https://github.com/muhammad-fiaz/zigantic/actions/workflows/ci.yml"><img src="https://github.com/muhammad-fiaz/zigantic/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <a href="https://github.com/muhammad-fiaz/zigantic"><img src="https://img.shields.io/github/stars/muhammad-fiaz/zigantic" alt="GitHub stars"></a>
 <a href="https://github.com/muhammad-fiaz/zigantic/issues"><img src="https://img.shields.io/github/issues/muhammad-fiaz/zigantic" alt="GitHub issues"></a>
-<a href="https://github.com/muhammad-fiaz/zigantic"><img src="https://img.shields.io/github/license/muhammad-fiaz/zigantic" alt="License"></a>
-<br>
+<a href="https://github.com/muhammad-fiaz/zigantic/pulls"><img src="https://img.shields.io/github/issues-pr/muhammad-fiaz/zigantic" alt="GitHub pull requests"></a>
+<a href="https://github.com/muhammad-fiaz/zigantic"><img src="https://img.shields.io/github/last-commit/muhammad-fiaz/zigantic" alt="GitHub last commit"></a>
+<a href="https://github.com/muhammad-fiaz/zigantic/blob/main/LICENSE"><img src="https://img.shields.io/github/license/muhammad-fiaz/zigantic" alt="License"></a>
+<a href="https://github.com/muhammad-fiaz/zigantic/actions/workflows/ci.yml"><img src="https://github.com/muhammad-fiaz/zigantic/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 <img src="https://img.shields.io/badge/platforms-linux%20%7C%20windows%20%7C%20macos-blue" alt="Supported Platforms">
-<img src="https://img.shields.io/badge/tests-102%20passing-brightgreen" alt="Tests">
-<img src="https://img.shields.io/badge/types-40+-purple" alt="Types">
+<a href="https://github.com/muhammad-fiaz/zigantic/releases/latest"><img src="https://img.shields.io/github/v/release/muhammad-fiaz/zigantic?label=Latest%20Release&style=flat-square" alt="Latest Release"></a>
+<a href="https://pay.muhammadfiaz.com"><img src="https://img.shields.io/badge/Sponsor-pay.muhammadfiaz.com-ff69b4?style=flat&logo=heart" alt="Sponsor"></a>
+<a href="https://github.com/sponsors/muhammad-fiaz"><img src="https://img.shields.io/badge/Sponsor-💖-pink?style=social&logo=github" alt="GitHub Sponsors"></a>
+<a href="https://hits.sh/github.com/muhammad-fiaz/zigantic/"><img src="https://hits.sh/github.com/muhammad-fiaz/zigantic.svg?label=Visitors&extraCount=0&color=green" alt="Repo Visitors"></a>
 
-<br><br>
+<p><em>Pydantic-like data validation and JSON serialization for Zig — bringing type-safe validation to the Zig ecosystem.</em></p>
 
-**[📚 Documentation](https://muhammad-fiaz.github.io/zigantic/)** •
-**[🚀 Quick Start](https://muhammad-fiaz.github.io/zigantic/guide/quick-start)** •
-**[📖 API Reference](https://muhammad-fiaz.github.io/zigantic/api/types)**
+<b>📚 <a href="https://muhammad-fiaz.github.io/zigantic/">Documentation</a> |
+<a href="https://muhammad-fiaz.github.io/zigantic/api/types">API Reference</a> |
+<a href="https://muhammad-fiaz.github.io/zigantic/guide/quick-start">Quick Start</a> |
+<a href="https://github.com/muhammad-fiaz/zigantic/blob/main/CONTRIBUTING.md">Contributing</a></b>
 
 </div>
 
 ---
-
 
 zigantic brings Pydantic-style data validation to Zig, using the type system for compile-time guarantees. Define validation rules as types, parse JSON with automatic error handling, and serialize with zero runtime overhead for unused features.
 
