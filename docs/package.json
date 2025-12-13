@@ -1,0 +1,15 @@
+{
+  "name": "zigantic-docs",
+  "version": "0.0.1",
+  "description": "Documentation for zigantic - Pydantic-like validation for Zig",
+  "author": "Muhammad Fiaz",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  }
+}

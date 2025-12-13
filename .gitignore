@@ -1,0 +1,35 @@
+# Zig
+zig-out/
+zig-cache/
+.zig-cache/
+*.obj
+*.o
+*.a
+*.lib
+*.pdb
+
+# VitePress
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+docs/bun.lockb
+
+# Node
+node_modules/
+package-lock.json
+bun.lockb
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log

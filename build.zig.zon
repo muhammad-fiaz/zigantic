@@ -1,0 +1,13 @@
+.{
+    .name = .zigantic,
+    .version = "0.0.1",
+    .fingerprint = 0x1fba9aa888c5185b,
+    .minimum_zig_version = "0.15.0",
+    .paths = .{
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+        "LICENSE",
+    },
+}

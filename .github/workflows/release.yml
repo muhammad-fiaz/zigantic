@@ -1,0 +1,111 @@
+name: Release
+permissions:
+  contents: write
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.0
+      - name: Run Tests
+        run: zig build test
+
+  build-library:
+    name: Build Library (${{ matrix.target }})
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-windows
+          - x86-windows
+          - x86_64-linux
+          - x86-linux
+          - aarch64-linux
+          - x86_64-macos
+          - aarch64-macos
+    steps:
+      - uses: actions/checkout@v5
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.0
+      
+      - name: Build Library
+        run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }}
+
+      - name: Rename Artifact (Windows)
+        if: contains(matrix.target, 'windows')
+        run: mv zig-out/lib/zigantic.lib zigantic-${{ matrix.target }}.lib
+
+      - name: Rename Artifact (Unix)
+        if: ${{ !contains(matrix.target, 'windows') }}
+        run: mv zig-out/lib/libzigantic.a libzigantic-${{ matrix.target }}.a
+
+      - name: Upload Artifact
+        run: gh release upload ${{ github.event.release.tag_name }} ${{ contains(matrix.target, 'windows') && format('zigantic-{0}.lib', matrix.target) || format('libzigantic-{0}.a', matrix.target) }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+  update-release:
+    name: Update Release Description
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      
+      - name: Get Release URL
+        id: get_url
+        run: echo "url=https://github.com/${{ github.repository }}/archive/refs/tags/${{ github.event.release.tag_name }}.tar.gz" >> $GITHUB_OUTPUT
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.0
+
+      - name: Calculate Hash
+        id: calc_hash
+        run: |
+          zig fetch --save ${{ steps.get_url.outputs.url }}
+          HASH=$(grep '.hash =' build.zig.zon | cut -d '"' -f 2)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+
+      - name: Update Release Body
+        uses: softprops/action-gh-release@v1
+        with:
+          body: |
+            ${{ github.event.release.body }}
+
+            ## Installation
+
+            ```bash
+            zig fetch --save https://github.com/${{ github.repository }}/archive/refs/tags/${{ github.event.release.tag_name }}.tar.gz
+            ```
+
+            Then in `build.zig`:
+
+            ```zig
+            const zigantic = b.dependency("zigantic", .{ .target = target, .optimize = optimize });
+            exe.root_module.addImport("zigantic", zigantic.module("zigantic"));
+            ```
+
+            ## Prebuilt Libraries
+
+            | Platform | File |
+            |----------|------|
+            | Windows x86_64 | [zigantic-x86_64-windows.lib](https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/zigantic-x86_64-windows.lib) |
+            | Windows x86 | [zigantic-x86-windows.lib](https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/zigantic-x86-windows.lib) |
+            | Linux x86_64 | [libzigantic-x86_64-linux.a](https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/libzigantic-x86_64-linux.a) |
+            | Linux x86 | [libzigantic-x86-linux.a](https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/libzigantic-x86-linux.a) |
+            | Linux aarch64 | [libzigantic-aarch64-linux.a](https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/libzigantic-aarch64-linux.a) |
+            | macOS x86_64 | [libzigantic-x86_64-macos.a](https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/libzigantic-x86_64-macos.a) |
+            | macOS aarch64 | [libzigantic-aarch64-macos.a](https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/libzigantic-aarch64-macos.a) |
