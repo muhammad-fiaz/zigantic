@@ -358,13 +358,4 @@ zig build example    # Run basic example
 
 ## 📄 License
 
-MIT License - Copyright (c) 2025 Muhammad Fiaz
-
----
-
-<div align="center">
-  <p>Made with ❤️ for the Zig community</p>
-  <a href="https://github.com/muhammad-fiaz/zigantic/stargazers">⭐ Star this repo</a> •
-  <a href="https://github.com/muhammad-fiaz/zigantic/issues">🐛 Report Bug</a> •
-  <a href="https://github.com/muhammad-fiaz/zigantic/issues">💡 Request Feature</a>
-</div>
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
