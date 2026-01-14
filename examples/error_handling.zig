@@ -4,6 +4,9 @@ const std = @import("std");
 const z = @import("zigantic");
 
 pub fn main() !void {
+    // Disable update check to prevent background thread memory leaks in examples
+    z.disableUpdateCheck();
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
