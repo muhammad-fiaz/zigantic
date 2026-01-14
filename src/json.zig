@@ -129,8 +129,11 @@ fn parseZiganticType(
 ) !?T {
     const zigantic_type = T.zigantic_type;
 
-    // String types (string, email, url, regex)
-    if (zigantic_type == .string or zigantic_type == .email or zigantic_type == .url or zigantic_type == .regex) {
+    // String-based types
+    if (zigantic_type == .string or zigantic_type == .trimmed or zigantic_type == .lowercase or
+        zigantic_type == .uppercase or zigantic_type == .alphanumeric or zigantic_type == .ascii or
+        zigantic_type == .secret or zigantic_type == .strong_password)
+    {
         const str = switch (json_value) {
             .string => |s| s,
             else => {
@@ -146,8 +149,35 @@ fn parseZiganticType(
         };
     }
 
-    // Integer types (int, uint)
-    if (zigantic_type == .int or zigantic_type == .uint) {
+    // Format types (all string-based)
+    if (zigantic_type == .email or zigantic_type == .url or zigantic_type == .https_url or
+        zigantic_type == .uuid or zigantic_type == .ipv4 or zigantic_type == .ipv6 or
+        zigantic_type == .slug or zigantic_type == .semver or zigantic_type == .phone or
+        zigantic_type == .credit_card or zigantic_type == .regex or zigantic_type == .base64 or
+        zigantic_type == .hex_string or zigantic_type == .hex_color or zigantic_type == .mac_address or
+        zigantic_type == .iso_datetime or zigantic_type == .iso_date or zigantic_type == .country_code or
+        zigantic_type == .currency_code)
+    {
+        const str = switch (json_value) {
+            .string => |s| s,
+            else => {
+                try addError(error_list, path, errors.ValidationError.TypeMismatch, "expected string", null);
+                return null;
+            },
+        };
+
+        return T.init(str) catch |err| {
+            const msg = getValidationMessage(T, err);
+            try addError(error_list, path, err, msg, str);
+            return null;
+        };
+    }
+
+    // Integer types (int, uint, even, odd, multiple, range, oneof, port)
+    if (zigantic_type == .int or zigantic_type == .uint or zigantic_type == .even or
+        zigantic_type == .odd or zigantic_type == .multiple or zigantic_type == .range or
+        zigantic_type == .oneof or zigantic_type == .port)
+    {
         const val = switch (json_value) {
             .integer => |i| i,
             else => {
@@ -156,23 +186,68 @@ fn parseZiganticType(
             },
         };
 
-        const IntType = T.IntType;
-        const casted = std.math.cast(IntType, val) orelse {
-            try addError(error_list, path, errors.ValidationError.TooLarge, "integer out of range", null);
-            return null;
+        if (@hasDecl(T, "IntType")) {
+            const IntType = T.IntType;
+            const casted = std.math.cast(IntType, val) orelse {
+                try addError(error_list, path, errors.ValidationError.TooLarge, "integer out of range", null);
+                return null;
+            };
+
+            return T.init(casted) catch |err| {
+                const msg = getValidationMessage(T, err);
+                var buf: [32]u8 = undefined;
+                const val_str = std.fmt.bufPrint(&buf, "{d}", .{val}) catch "?";
+                try addError(error_list, path, err, msg, val_str);
+                return null;
+            };
+        } else {
+            // Port type uses u16
+            const casted = std.math.cast(u16, val) orelse {
+                try addError(error_list, path, errors.ValidationError.TooLarge, "integer out of range", null);
+                return null;
+            };
+
+            return T.init(casted) catch |err| {
+                const msg = getValidationMessage(T, err);
+                try addError(error_list, path, err, msg, null);
+                return null;
+            };
+        }
+    }
+
+    // Float types (float, percentage, probability, finite_float, latitude, longitude)
+    if (zigantic_type == .float or zigantic_type == .finite_float or
+        zigantic_type == .latitude or zigantic_type == .longitude)
+    {
+        const val: f64 = switch (json_value) {
+            .float => |f| f,
+            .integer => |i| @floatFromInt(i),
+            else => {
+                try addError(error_list, path, errors.ValidationError.InvalidNumber, "expected number", null);
+                return null;
+            },
         };
 
-        return T.init(casted) catch |err| {
-            const msg = getValidationMessage(T, err);
-            var buf: [32]u8 = undefined;
-            const val_str = std.fmt.bufPrint(&buf, "{d}", .{val}) catch "?";
-            try addError(error_list, path, err, msg, val_str);
-            return null;
-        };
+        if (@hasDecl(T, "FloatType")) {
+            const FloatType = T.FloatType;
+            const casted: FloatType = @floatCast(val);
+            return T.init(casted) catch |err| {
+                const msg = getValidationMessage(T, err);
+                try addError(error_list, path, err, msg, null);
+                return null;
+            };
+        } else {
+            // Latitude/Longitude use f64 directly
+            return T.init(val) catch |err| {
+                const msg = getValidationMessage(T, err);
+                try addError(error_list, path, err, msg, null);
+                return null;
+            };
+        }
     }
 
     // List type
-    if (zigantic_type == .list) {
+    if (zigantic_type == .list or zigantic_type == .fixed_list) {
         const arr = switch (json_value) {
             .array => |a| a,
             else => {
@@ -223,6 +298,62 @@ fn parseZiganticType(
         return T.init(inner) catch |err| {
             const msg = getValidationMessage(T, err);
             try addError(error_list, path, err, msg, null);
+            return null;
+        };
+    }
+
+    // Transform type
+    if (zigantic_type == .transform) {
+        const ValueType = T.ValueType;
+        const inner = try parseValue(ValueType, json_value, allocator, error_list, path) orelse return null;
+        return T.init(inner);
+    }
+
+    // Coerce type
+    if (zigantic_type == .coerce) {
+        const FromType = T.FromType;
+        const inner = try parseValue(FromType, json_value, allocator, error_list, path) orelse return null;
+        return T.init(inner) catch |err| {
+            const msg = getValidationMessage(T, err);
+            try addError(error_list, path, err, msg, null);
+            return null;
+        };
+    }
+
+    // Literal type
+    if (zigantic_type == .literal) {
+        const ValueType = T.ValueType;
+        const inner = try parseValue(ValueType, json_value, allocator, error_list, path) orelse return null;
+        return T.init(inner) catch |err| {
+            const msg = getValidationMessage(T, err);
+            try addError(error_list, path, err, msg, null);
+            return null;
+        };
+    }
+
+    // Nullable type
+    if (zigantic_type == .nullable) {
+        if (json_value == .null) {
+            return T.initNull();
+        }
+        const InnerType = T.InnerType;
+        const inner = try parseValue(InnerType, json_value, allocator, error_list, path) orelse return null;
+        return T.init(inner);
+    }
+
+    // Fallback - try as string type with init method
+    if (@hasDecl(T, "init")) {
+        const str = switch (json_value) {
+            .string => |s| s,
+            else => {
+                try addError(error_list, path, errors.ValidationError.TypeMismatch, "expected string", null);
+                return null;
+            },
+        };
+
+        return T.init(str) catch |err| {
+            const msg = getValidationMessage(T, err);
+            try addError(error_list, path, err, msg, str);
             return null;
         };
     }
@@ -620,7 +751,6 @@ fn writeJsonString(str: []const u8, buffer: *std.ArrayListUnmanaged(u8), allocat
 
     try buffer.append(allocator, '"');
 }
-
 
 test "fromJson - simple struct" {
     const allocator = std.testing.allocator;
