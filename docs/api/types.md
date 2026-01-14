@@ -79,19 +79,30 @@ f.trunc()      // Truncate
 
 ## Format Types
 
-| Type             | Description        |
-| ---------------- | ------------------ |
-| `Email`          | Email address      |
-| `Url`            | HTTP/HTTPS URL     |
-| `HttpsUrl`       | HTTPS only         |
-| `Uuid`           | UUID format        |
-| `Ipv4`           | IPv4 address       |
-| `Ipv6`           | IPv6 address       |
-| `Slug`           | URL slug           |
-| `Semver`         | Semantic version   |
-| `PhoneNumber`    | Phone number       |
-| `CreditCard`     | Credit card (Luhn) |
-| `Regex(pattern)` | Pattern matching   |
+| Type                    | Description               |
+| ----------------------- | ------------------------- |
+| `Email`                 | Email address             |
+| `Url`                   | HTTP/HTTPS URL            |
+| `HttpsUrl`              | HTTPS only                |
+| `Uuid`                  | UUID format               |
+| `Ipv4`                  | IPv4 address              |
+| `Ipv6`                  | IPv6 address              |
+| `Slug`                  | URL slug                  |
+| `Semver`                | Semantic version          |
+| `PhoneNumber`           | Phone number              |
+| `CreditCard`            | Credit card (Luhn)        |
+| `Regex(pattern)`        | Pattern matching          |
+| `Base64`                | Base64 encoded string     |
+| `HexString(min, max)`   | Hexadecimal string        |
+| `HexColor`              | Hex color (#FF5733)       |
+| `MacAddress`            | MAC address               |
+| `IsoDateTime`           | ISO 8601 datetime         |
+| `IsoDate`               | ISO 8601 date             |
+| `CountryCode`           | ISO 3166-1 alpha-2 (US)   |
+| `CurrencyCode`          | ISO 4217 currency (USD)   |
+| `Latitude`              | -90 to 90 coordinate      |
+| `Longitude`             | -180 to 180 coordinate    |
+| `Port`                  | Network port 1-65535      |
 
 ### Format Methods
 
@@ -119,6 +130,39 @@ phone.hasCountryCode() // Has +
 // CreditCard
 card.cardType() // visa/mastercard/amex
 card.masked()   // Last 4 digits
+
+// Base64
+b64.estimatedDecodedLen() // Estimated decoded size
+
+// HexString
+hex.isLowercase() // All lowercase
+hex.isUppercase() // All uppercase
+
+// HexColor
+color.getHex()   // Get without #
+color.hasHash()  // Has # prefix
+
+// IsoDateTime
+dt.getDatePart()  // YYYY-MM-DD
+dt.getTimePart()  // HH:MM:SS
+dt.hasTimezone()  // Has timezone
+dt.isUtc()        // Is UTC (Z)
+
+// IsoDate
+date.getYear()   // Year as u16
+date.getMonth()  // Month as u8
+date.getDay()    // Day as u8
+
+// Latitude/Longitude
+lat.isNorthern()  // >= 0
+lat.isSouthern()  // < 0
+lng.isEastern()   // >= 0
+lng.isWestern()   // < 0
+
+// Port
+port.isPrivileged() // < 1024
+port.isRegistered() // 1024-49151
+port.isDynamic()    // > 49151
 ```
 
 ## Collection Types
