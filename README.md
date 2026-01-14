@@ -15,9 +15,9 @@
 <a href="https://github.com/sponsors/muhammad-fiaz"><img src="https://img.shields.io/badge/Sponsor-💖-pink?style=social&logo=github" alt="GitHub Sponsors"></a>
 <a href="https://hits.sh/github.com/muhammad-fiaz/zigantic/"><img src="https://hits.sh/github.com/muhammad-fiaz/zigantic.svg?label=Visitors&extraCount=0&color=green" alt="Repo Visitors"></a>
 
-<p><em>Pydantic-like data validation and JSON serialization for Zig — bringing type-safe validation to the Zig ecosystem.</em></p>
+<p><em>Pydantic-like data validation and JSON serialization for Zig - bringing type-safe validation to the Zig ecosystem.</em></p>
 
-<b>📚 <a href="https://muhammad-fiaz.github.io/zigantic/">Documentation</a> |
+<b> <a href="https://muhammad-fiaz.github.io/zigantic/">Documentation</a> |
 <a href="https://muhammad-fiaz.github.io/zigantic/api/types">API Reference</a> |
 <a href="https://muhammad-fiaz.github.io/zigantic/guide/quick-start">Quick Start</a> |
 <a href="https://github.com/muhammad-fiaz/zigantic/blob/main/CONTRIBUTING.md">Contributing</a></b>
