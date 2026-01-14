@@ -5,29 +5,127 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.15.0
-      - name: Run Tests
-        run: zig build test
-
   build:
-    name: Build
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: mlugg/setup-zig@v2
+      - name: Checkout
+        uses: actions/checkout@v5
         with:
-          version: 0.15.0
-      - name: Build Library
-        run: zig build
+          fetch-depth: 0
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Run Zig tests
+        run: zig build test --summary all
+
+      - name: Build library (Debug)
+        run: zig build -Doptimize=Debug
+
+      - name: Build library (ReleaseFast)
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Run benchmarks
+        run: zig build bench
+
+      - name: Zig format check
+        run: zig fmt --check src/ examples/ bench/
+
+  examples-run:
+    name: Run Examples (${{ matrix.target }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-linux
+          - os: ubuntu-latest
+            target: x86-linux
+          - os: ubuntu-latest
+            target: aarch64-linux
+          - os: macos-latest
+            target: x86_64-macos
+          - os: macos-latest
+            target: aarch64-macos
+          - os: windows-latest
+            target: x86_64-windows
+          - os: windows-latest
+            target: x86-windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install QEMU and Multilib (Linux)
+        if: runner.os == 'Linux' && (matrix.target == 'aarch64-linux' || matrix.target == 'x86-linux')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static gcc-multilib
+          if [ "${{ matrix.target }}" = "aarch64-linux" ]; then
+            sudo apt-get install -y gcc-aarch64-linux-gnu
+          fi
+
+      - name: Run Zig tests on ${{ matrix.target }}
+        run: zig build test -Dtarget=${{ matrix.target }} --summary all
+
+      - name: Run all examples on ${{ matrix.target }}
+        run: |
+          echo "Running examples for ${{ matrix.target }}"
+          zig build run-all-examples -Dtarget=${{ matrix.target }}
+
+  examples-build-only:
+    name: Build (${{ matrix.target }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux
+          - x86-linux
+          - aarch64-linux
+          - x86_64-macos
+          - aarch64-macos
+          - x86_64-windows
+          - x86-windows
+          - x86_64-freestanding
+          - aarch64-freestanding
+          - riscv64-freestanding
+          - riscv64-linux
+          - riscv32-linux
+          - powerpc64le-linux
+          - mips64-linux
+          - s390x-linux
+          - arm-freestanding
+          - arm-linux-gnueabihf
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build for ${{ matrix.target }} (build-only)
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=Debug

@@ -621,9 +621,6 @@ fn writeJsonString(str: []const u8, buffer: *std.ArrayListUnmanaged(u8), allocat
     try buffer.append(allocator, '"');
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
 
 test "fromJson - simple struct" {
     const allocator = std.testing.allocator;

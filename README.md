@@ -28,53 +28,51 @@
 
 zigantic brings Pydantic-style data validation to Zig, using the type system for compile-time guarantees. Define validation rules as types, parse JSON with automatic error handling, and serialize with zero runtime overhead for unused features.
 
-## ✨ Features
+## Features
 
-| Feature                      | Description                                                         |
-| ---------------------------- | ------------------------------------------------------------------- |
-| ⚡ **Compile-Time Driven**   | Validation logic is types. Constraints are checked at compile time. |
-| 🦎 **Idiomatic Zig**         | No macros, no DSLs, no magic. Just types and functions.             |
-| 📝 **Human-Readable Errors** | Field-aware messages with error codes (E001, E010, etc.)            |
-| 🚀 **Zero Overhead**         | Unused features have zero runtime cost.                             |
-| 🔒 **40+ Built-in Types**    | Strings, numbers, formats, collections with rich utilities.         |
-| 🔄 **JSON Parsing**          | Parse and serialize JSON with automatic validation.                 |
-| ✅ **102 Tests**             | Comprehensive test coverage for reliability.                        |
+| Feature                  | Description                                                         | Docs                                                                                      |
+| ------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **Compile-Time Driven**  | Validation logic is types. Constraints are checked at compile time. | [Philosophy](https://muhammad-fiaz.github.io/zigantic/guide/philosophy)                   |
+| **Idiomatic Zig**        | No macros, no DSLs, no magic. Just types and functions.             | [Getting Started](https://muhammad-fiaz.github.io/zigantic/guide/getting-started)         |
+| **Human-Readable Errors**| Field-aware messages with error codes (E001, E010, etc.)            | [Error Handling](https://muhammad-fiaz.github.io/zigantic/guide/error-handling)           |
+| **Zero Overhead**        | Unused features have zero runtime cost.                             | [Benchmarks](https://muhammad-fiaz.github.io/zigantic/guide/benchmarks)                   |
+| **50+ Built-in Types**   | Strings, numbers, formats, dates, geo, and collections.             | [Types API](https://muhammad-fiaz.github.io/zigantic/api/types)                           |
+| **JSON Serialization**   | Parse and serialize JSON with automatic validation.                 | [JSON API](https://muhammad-fiaz.github.io/zigantic/api/json)                             |
+| **Custom Validators**    | Define custom validation functions and transformations.             | [Validators](https://muhammad-fiaz.github.io/zigantic/api/validators)                     |
+| **Schemas**              | Define complex data structures with nested validation.              | [Schemas](https://muhammad-fiaz.github.io/zigantic/guide/schemas)                         |
+| **Auto Updates**         | Automatic version checking (can be disabled).                       | [Version & Updates](https://muhammad-fiaz.github.io/zigantic/guide/version-updates)       |
 
-## 📦 Installation
+## Installation
 
-### Using Zig Package Manager
+### Release Installation (Recommended)
+
+Install the latest stable release (v0.0.2):
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/v0.0.1.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/v0.0.2.tar.gz
+```
+
+### Nightly Installation
+
+Install the latest development version:
+
+```bash
+zig fetch --save git+https://github.com/muhammad-fiaz/zigantic
 ```
 
 ### Configure build.zig
 
+Then in your `build.zig`:
+
 ```zig
-const std = @import("std");
-
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
-    const zigantic = b.dependency("zigantic", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const exe = b.addExecutable(.{
-        .name = "my-app",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    exe.root_module.addImport("zigantic", zigantic.module("zigantic"));
-    b.installArtifact(exe);
-}
+const zigantic_dep = b.dependency("zigantic", .{
+    .target = target,
+    .optimize = optimize,
+});
+exe.root_module.addImport("zigantic", zigantic_dep.module("zigantic"));
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Direct Validation
 

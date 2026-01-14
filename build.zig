@@ -23,6 +23,10 @@ pub fn build(b: *std.Build) void {
         .{ .name = "error_handling", .path = "examples/error_handling.zig" },
     };
 
+    // Create run-all-examples step
+    const run_all_examples = b.step("run-all-examples", "Run all examples sequentially");
+    var previous_run_step: ?*std.Build.Step = null;
+
     inline for (examples) |example| {
         const exe = b.addExecutable(.{
             .name = example.name,
@@ -42,6 +46,17 @@ pub fn build(b: *std.Build) void {
         run_exe.step.dependOn(&install_exe.step);
         const run_step = b.step("run-" ++ example.name, "Run " ++ example.name ++ " example");
         run_step.dependOn(&run_exe.step);
+
+        // Add to run-all-examples
+        const run_all_exe = b.addRunArtifact(exe);
+        if (previous_run_step) |prev| {
+            run_all_exe.step.dependOn(prev);
+        }
+        previous_run_step = &run_all_exe.step;
+    }
+
+    if (previous_run_step) |last| {
+        run_all_examples.dependOn(last);
     }
 
     // Default example
@@ -72,6 +87,47 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
+
+    // Benchmark
+    const bench_exe = b.addExecutable(.{
+        .name = "benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/benchmark.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    bench_exe.root_module.addImport("zigantic", zigantic_module);
+
+    const install_bench = b.addInstallArtifact(bench_exe, .{});
+    const run_bench = b.addRunArtifact(bench_exe);
+    run_bench.step.dependOn(&install_bench.step);
+
+    const bench_step = b.step("bench", "Run benchmarks");
+    bench_step.dependOn(&run_bench.step);
+
+    // Docs generation
+    const docs_step = b.step("docs", "Generate documentation");
+    const docs_obj = b.addObject(.{
+        .name = "zigantic",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/zigantic.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = docs_obj.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+    docs_step.dependOn(&install_docs.step);
+
+    // Test-all step (runs tests, benchmarks, and examples)
+    const test_all_step = b.step("test-all", "Run all tests, benchmarks, and examples sequentially");
+    test_all_step.dependOn(test_step);
+    test_all_step.dependOn(bench_step);
+    test_all_step.dependOn(run_all_examples);
 
     // Library
     const lib = b.addLibrary(.{

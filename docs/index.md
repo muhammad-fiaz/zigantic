@@ -3,7 +3,7 @@ layout: home
 hero:
   name: zigantic
   text: Pydantic-like validation for Zig
-  tagline: Type-safe data validation with 40+ built-in types, human-readable errors, and zero runtime overhead. 102 tests passing.
+  tagline: Type-safe data validation with 50+ built-in types, human-readable errors, and zero runtime overhead.
   image:
     src: /logo.png
     alt: zigantic
@@ -28,14 +28,14 @@ features:
     title: Human-Readable Errors
     details: Field-aware error messages with error codes (E001, E010, etc.) for debugging and API responses.
   - icon: 🚀
-    title: 40+ Built-in Types
-    details: Strings, numbers, emails, URLs, UUIDs, IPs, credit cards, and more with rich utility methods.
+    title: 50+ Built-in Types
+    details: Strings, numbers, emails, URLs, UUIDs, IPs, dates, geo coordinates, and more with rich utility methods.
   - icon: 🔄
-    title: JSON Parsing
+    title: JSON Serialization
     details: Parse and serialize JSON with automatic validation, nested struct support, and default values.
-  - icon: 🔔
-    title: Automatic Updates
-    details: Checks for library updates automatically in the background. Easily disable with one function call.
+  - icon: 🔧
+    title: Custom Validators
+    details: Define custom validation functions, transformations, and type coercion for any use case.
 ---
 
 <style>
@@ -47,7 +47,7 @@ features:
 }
 </style>
 
-## 🚀 Quick Example
+## Quick Example
 
 ```zig
 const std = @import("std");
@@ -73,19 +73,37 @@ pub fn main() !void {
 }
 ```
 
-## 📦 Installation
+## Installation
+
+### Release Installation (Recommended)
+
+Install the latest stable release (v0.0.2):
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/v0.0.1.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/v0.0.2.tar.gz
 ```
+
+### Nightly Installation
+
+Install the latest development version:
+
+```bash
+zig fetch --save git+https://github.com/muhammad-fiaz/zigantic.git
+```
+
+### Configure build.zig
+
+Then in your `build.zig`:
 
 ```zig
-// build.zig
-const zigantic = b.dependency("zigantic", .{ .target = target, .optimize = optimize });
-exe.root_module.addImport("zigantic", zigantic.module("zigantic"));
+const zigantic_dep = b.dependency("zigantic", .{
+    .target = target,
+    .optimize = optimize,
+});
+exe.root_module.addImport("zigantic", zigantic_dep.module("zigantic"));
 ```
 
-## 📚 Type Categories
+## Type Categories
 
 <div class="type-grid">
 
@@ -97,9 +115,9 @@ exe.root_module.addImport("zigantic", zigantic.module("zigantic"));
 
 `Int` `UInt` `PositiveInt` `NonNegativeInt` `NegativeInt` `EvenInt` `OddInt` `MultipleOf` `Float` `Percentage` `Probability` `PositiveFloat` `NegativeFloat` `FiniteFloat`
 
-### Format Types (11)
+### Format Types (22)
 
-`Email` `Url` `HttpsUrl` `Uuid` `Ipv4` `Ipv6` `Slug` `Semver` `PhoneNumber` `CreditCard` `Regex`
+`Email` `Url` `HttpsUrl` `Uuid` `Ipv4` `Ipv6` `Slug` `Semver` `PhoneNumber` `CreditCard` `Regex` `Base64` `HexString` `HexColor` `MacAddress` `IsoDateTime` `IsoDate` `CountryCode` `CurrencyCode` `Latitude` `Longitude` `Port`
 
 ### Collection Types (3)
 
@@ -111,19 +129,20 @@ exe.root_module.addImport("zigantic", zigantic.module("zigantic"));
 
 </div>
 
-## 🏃 Examples
+## Examples
 
 Run the included examples:
 
 ```bash
 zig build run-basic           # Direct validation + JSON
-zig build run-advanced_types  # All 40+ types demo
+zig build run-advanced_types  # All 50+ types demo
 zig build run-validators      # Validator functions
 zig build run-json_example    # Full JSON workflow
 zig build run-error_handling  # Error management
+zig build bench               # Run benchmarks
 ```
 
-## ❤️ Made with love for the Zig community
+## Made with love for the Zig community
 
 <div style="text-align: center; margin-top: 2rem;">
   <a href="https://github.com/muhammad-fiaz/zigantic/stargazers" style="margin: 0 0.5rem;">⭐ Star</a>

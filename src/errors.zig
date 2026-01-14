@@ -4,9 +4,6 @@
 
 const std = @import("std");
 
-// ============================================================================
-// ERROR TYPES
-// ============================================================================
 
 pub const ValidationError = error{
     // String errors
@@ -75,9 +72,6 @@ pub const ValidationError = error{
     ParseError,
 };
 
-// ============================================================================
-// FIELD ERROR
-// ============================================================================
 
 pub const FieldError = struct {
     field: []const u8,
@@ -101,9 +95,6 @@ pub const FieldError = struct {
     }
 };
 
-// ============================================================================
-// ERROR LIST
-// ============================================================================
 
 pub const ErrorList = struct {
     errors: std.ArrayListUnmanaged(FieldError),
@@ -255,9 +246,6 @@ pub const ErrorList = struct {
     }
 };
 
-// ============================================================================
-// ERROR MESSAGES
-// ============================================================================
 
 pub fn errorMessage(err: ValidationError) []const u8 {
     return switch (err) {
@@ -313,9 +301,6 @@ pub fn errorCode(err: ValidationError) []const u8 {
     };
 }
 
-// ============================================================================
-// TESTS
-// ============================================================================
 
 test "ErrorList add single" {
     var errors = ErrorList.init(std.testing.allocator);

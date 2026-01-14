@@ -6,9 +6,6 @@ const std = @import("std");
 const validators = @import("validators.zig");
 const errors = @import("errors.zig");
 
-// ============================================================================
-// STRING TYPES
-// ============================================================================
 
 /// String with length constraints and helper methods.
 pub fn String(comptime min_len: usize, comptime max_len: usize) type {
@@ -263,9 +260,6 @@ pub fn StrongPassword(comptime min_len: usize, comptime max_len: usize) type {
     };
 }
 
-// ============================================================================
-// NUMBER TYPES
-// ============================================================================
 
 /// Signed integer with range and utilities.
 pub fn Int(comptime T: type, comptime min_val: comptime_int, comptime max_val: comptime_int) type {
@@ -481,9 +475,6 @@ pub fn FiniteFloat(comptime T: type) type {
     };
 }
 
-// ============================================================================
-// FORMAT TYPES
-// ============================================================================
 
 /// Email with utilities.
 pub const Email = struct {
@@ -720,9 +711,286 @@ pub fn Regex(comptime pattern: []const u8) type {
     };
 }
 
-// ============================================================================
-// COLLECTION TYPES
-// ============================================================================
+/// Base64 encoded string.
+pub const Base64 = struct {
+    value: []const u8,
+    pub const zigantic_type = .base64;
+
+    pub fn init(str: []const u8) errors.ValidationError!Base64 {
+        if (str.len == 0) return errors.ValidationError.TooShort;
+        // Basic base64 character validation
+        for (str) |c| {
+            if (!std.ascii.isAlphanumeric(c) and c != '+' and c != '/' and c != '=') {
+                return errors.ValidationError.InvalidFormat;
+            }
+        }
+        return Base64{ .value = str };
+    }
+    pub fn get(self: Base64) []const u8 {
+        return self.value;
+    }
+    pub fn estimatedDecodedLen(self: Base64) usize {
+        // Base64: 4 chars = 3 bytes, account for padding
+        const padding = blk: {
+            var count: usize = 0;
+            if (self.value.len > 0 and self.value[self.value.len - 1] == '=') count += 1;
+            if (self.value.len > 1 and self.value[self.value.len - 2] == '=') count += 1;
+            break :blk count;
+        };
+        return (self.value.len / 4) * 3 - padding;
+    }
+};
+
+/// Hexadecimal string.
+pub fn HexString(comptime min_len: usize, comptime max_len: usize) type {
+    return struct {
+        const Self = @This();
+        value: []const u8,
+        pub const min = min_len;
+        pub const max = max_len;
+        pub const zigantic_type = .hex_string;
+
+        pub fn init(str: []const u8) errors.ValidationError!Self {
+            if (str.len < min_len) return errors.ValidationError.TooShort;
+            if (str.len > max_len) return errors.ValidationError.TooLong;
+            for (str) |c| {
+                if (!std.ascii.isHex(c)) return errors.ValidationError.InvalidFormat;
+            }
+            return Self{ .value = str };
+        }
+        pub fn get(self: Self) []const u8 {
+            return self.value;
+        }
+        pub fn isLowercase(self: Self) bool {
+            for (self.value) |c| {
+                if (c >= 'A' and c <= 'F') return false;
+            }
+            return true;
+        }
+        pub fn isUppercase(self: Self) bool {
+            for (self.value) |c| {
+                if (c >= 'a' and c <= 'f') return false;
+            }
+            return true;
+        }
+    };
+}
+
+/// Hex color code (e.g., #FF5733 or FF5733).
+pub const HexColor = struct {
+    value: []const u8,
+    pub const zigantic_type = .hex_color;
+
+    pub fn init(str: []const u8) errors.ValidationError!HexColor {
+        var hex = str;
+        if (str.len > 0 and str[0] == '#') hex = str[1..];
+        if (hex.len != 3 and hex.len != 6) return errors.ValidationError.InvalidFormat;
+        for (hex) |c| {
+            if (!std.ascii.isHex(c)) return errors.ValidationError.InvalidFormat;
+        }
+        return HexColor{ .value = str };
+    }
+    pub fn get(self: HexColor) []const u8 {
+        return self.value;
+    }
+    pub fn getHex(self: HexColor) []const u8 {
+        if (self.value.len > 0 and self.value[0] == '#') return self.value[1..];
+        return self.value;
+    }
+    pub fn hasHash(self: HexColor) bool {
+        return self.value.len > 0 and self.value[0] == '#';
+    }
+};
+
+/// MAC address (e.g., 00:1A:2B:3C:4D:5E).
+pub const MacAddress = struct {
+    value: []const u8,
+    pub const zigantic_type = .mac_address;
+
+    pub fn init(str: []const u8) errors.ValidationError!MacAddress {
+        // Format: XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX
+        if (str.len != 17) return errors.ValidationError.InvalidFormat;
+        const sep = if (str.len > 2) str[2] else ':';
+        if (sep != ':' and sep != '-') return errors.ValidationError.InvalidFormat;
+        var i: usize = 0;
+        while (i < str.len) : (i += 1) {
+            if ((i + 1) % 3 == 0) {
+                if (i < str.len - 1 and str[i] != sep) return errors.ValidationError.InvalidFormat;
+            } else {
+                if (!std.ascii.isHex(str[i])) return errors.ValidationError.InvalidFormat;
+            }
+        }
+        return MacAddress{ .value = str };
+    }
+    pub fn get(self: MacAddress) []const u8 {
+        return self.value;
+    }
+};
+
+/// ISO 8601 DateTime string (e.g., 2024-01-15T10:30:00Z).
+pub const IsoDateTime = struct {
+    value: []const u8,
+    pub const zigantic_type = .iso_datetime;
+
+    pub fn init(str: []const u8) errors.ValidationError!IsoDateTime {
+        // Basic ISO 8601 format validation: YYYY-MM-DDTHH:MM:SS or YYYY-MM-DDTHH:MM:SSZ
+        if (str.len < 19) return errors.ValidationError.InvalidFormat;
+        // Check date part YYYY-MM-DD
+        if (str[4] != '-' or str[7] != '-') return errors.ValidationError.InvalidFormat;
+        // Check T separator
+        if (str[10] != 'T' and str[10] != ' ') return errors.ValidationError.InvalidFormat;
+        // Check time part HH:MM:SS
+        if (str[13] != ':' or str[16] != ':') return errors.ValidationError.InvalidFormat;
+        return IsoDateTime{ .value = str };
+    }
+    pub fn get(self: IsoDateTime) []const u8 {
+        return self.value;
+    }
+    pub fn getDatePart(self: IsoDateTime) []const u8 {
+        return if (self.value.len >= 10) self.value[0..10] else "";
+    }
+    pub fn getTimePart(self: IsoDateTime) []const u8 {
+        if (self.value.len >= 19) {
+            return self.value[11..19];
+        }
+        return "";
+    }
+    pub fn hasTimezone(self: IsoDateTime) bool {
+        return self.value.len > 19 and (self.value[19] == 'Z' or self.value[19] == '+' or self.value[19] == '-');
+    }
+    pub fn isUtc(self: IsoDateTime) bool {
+        return self.value.len > 19 and self.value[19] == 'Z';
+    }
+};
+
+/// ISO 8601 Date string (e.g., 2024-01-15).
+pub const IsoDate = struct {
+    value: []const u8,
+    pub const zigantic_type = .iso_date;
+
+    pub fn init(str: []const u8) errors.ValidationError!IsoDate {
+        if (str.len != 10) return errors.ValidationError.InvalidFormat;
+        if (str[4] != '-' or str[7] != '-') return errors.ValidationError.InvalidFormat;
+        // Validate digits
+        for ([_]usize{ 0, 1, 2, 3, 5, 6, 8, 9 }) |i| {
+            if (!std.ascii.isDigit(str[i])) return errors.ValidationError.InvalidFormat;
+        }
+        return IsoDate{ .value = str };
+    }
+    pub fn get(self: IsoDate) []const u8 {
+        return self.value;
+    }
+    pub fn getYear(self: IsoDate) ?u16 {
+        const digits = self.value[0..4];
+        return std.fmt.parseInt(u16, digits, 10) catch null;
+    }
+    pub fn getMonth(self: IsoDate) ?u8 {
+        const digits = self.value[5..7];
+        return std.fmt.parseInt(u8, digits, 10) catch null;
+    }
+    pub fn getDay(self: IsoDate) ?u8 {
+        const digits = self.value[8..10];
+        return std.fmt.parseInt(u8, digits, 10) catch null;
+    }
+};
+
+/// ISO 3166-1 alpha-2 country code (e.g., US, GB, DE).
+pub const CountryCode = struct {
+    value: []const u8,
+    pub const zigantic_type = .country_code;
+
+    pub fn init(str: []const u8) errors.ValidationError!CountryCode {
+        if (str.len != 2) return errors.ValidationError.InvalidFormat;
+        for (str) |c| {
+            if (!std.ascii.isAlphabetic(c)) return errors.ValidationError.InvalidFormat;
+        }
+        return CountryCode{ .value = str };
+    }
+    pub fn get(self: CountryCode) []const u8 {
+        return self.value;
+    }
+};
+
+/// ISO 4217 currency code (e.g., USD, EUR, GBP).
+pub const CurrencyCode = struct {
+    value: []const u8,
+    pub const zigantic_type = .currency_code;
+
+    pub fn init(str: []const u8) errors.ValidationError!CurrencyCode {
+        if (str.len != 3) return errors.ValidationError.InvalidFormat;
+        for (str) |c| {
+            if (!std.ascii.isAlphabetic(c)) return errors.ValidationError.InvalidFormat;
+        }
+        return CurrencyCode{ .value = str };
+    }
+    pub fn get(self: CurrencyCode) []const u8 {
+        return self.value;
+    }
+};
+
+/// Latitude coordinate (-90 to 90).
+pub const Latitude = struct {
+    value: f64,
+    pub const zigantic_type = .latitude;
+
+    pub fn init(val: f64) errors.ValidationError!Latitude {
+        if (val < -90.0 or val > 90.0) return errors.ValidationError.OutOfRange;
+        return Latitude{ .value = val };
+    }
+    pub fn get(self: Latitude) f64 {
+        return self.value;
+    }
+    pub fn isNorthern(self: Latitude) bool {
+        return self.value >= 0;
+    }
+    pub fn isSouthern(self: Latitude) bool {
+        return self.value < 0;
+    }
+};
+
+/// Longitude coordinate (-180 to 180).
+pub const Longitude = struct {
+    value: f64,
+    pub const zigantic_type = .longitude;
+
+    pub fn init(val: f64) errors.ValidationError!Longitude {
+        if (val < -180.0 or val > 180.0) return errors.ValidationError.OutOfRange;
+        return Longitude{ .value = val };
+    }
+    pub fn get(self: Longitude) f64 {
+        return self.value;
+    }
+    pub fn isEastern(self: Longitude) bool {
+        return self.value >= 0;
+    }
+    pub fn isWestern(self: Longitude) bool {
+        return self.value < 0;
+    }
+};
+
+/// Port number (1-65535).
+pub const Port = struct {
+    value: u16,
+    pub const zigantic_type = .port;
+
+    pub fn init(val: u16) errors.ValidationError!Port {
+        if (val == 0) return errors.ValidationError.TooSmall;
+        return Port{ .value = val };
+    }
+    pub fn get(self: Port) u16 {
+        return self.value;
+    }
+    pub fn isPrivileged(self: Port) bool {
+        return self.value < 1024;
+    }
+    pub fn isRegistered(self: Port) bool {
+        return self.value >= 1024 and self.value <= 49151;
+    }
+    pub fn isDynamic(self: Port) bool {
+        return self.value > 49151;
+    }
+};
+
 
 pub fn List(comptime T: type, comptime min_len: usize, comptime max_len: usize) type {
     return struct {
@@ -785,9 +1053,6 @@ pub fn FixedList(comptime T: type, comptime exact_len: usize) type {
     };
 }
 
-// ============================================================================
-// SPECIAL TYPES
-// ============================================================================
 
 pub fn Default(comptime T: type, comptime default_value: T) type {
     return struct {
@@ -1029,9 +1294,6 @@ pub fn Lazy(comptime T: type) type {
     };
 }
 
-// ============================================================================
-// TESTS
-// ============================================================================
 
 test "String basic" {
     const Name = String(1, 50);

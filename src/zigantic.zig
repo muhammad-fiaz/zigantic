@@ -1,6 +1,4 @@
-//! # zigantic
-//!
-//! Pydantic-like data validation and serialization for Zig.
+//! zigantic - Pydantic-like data validation and serialization for Zig.
 
 const std = @import("std");
 
@@ -11,51 +9,23 @@ pub const json = @import("json.zig");
 pub const version = @import("version.zig");
 pub const report = @import("report.zig");
 
-// ============================================================================
-// LIBRARY CONFIGURATION
-// ============================================================================
-
 /// Configuration options for zigantic library.
 pub const Config = struct {
     /// Whether to automatically check for library updates.
-    /// Default is true. Set to false to disable automatic update checking.
     auto_update_check: bool = true,
-
     /// Whether to show update notifications in the log.
-    /// Default is true. Set to false to suppress update messages.
     show_update_notifications: bool = true,
 };
 
-/// Global configuration - can be modified before first library use.
 var global_config: Config = .{};
-
-/// Thread handle for the background update check (if running).
 var update_thread: ?std.Thread = null;
-
-/// Flag indicating if the automatic update check has been triggered.
 var update_check_triggered = false;
 var update_check_mutex = std.Thread.Mutex{};
 
-/// Set the library configuration. Call this BEFORE using any library functions
-/// if you want to disable automatic update checking.
-///
-/// Example:
-/// ```zig
-/// const z = @import("zigantic");
-///
-/// pub fn main() !void {
-///     // Disable automatic update checking (call before any other z.* functions)
-///     z.setConfig(.{ .auto_update_check = false });
-///
-///     // Now use the library normally...
-///     const name = try z.String(1, 50).init("Alice");
-/// }
-/// ```
+/// Set the library configuration. Call this BEFORE using any library functions.
 pub fn setConfig(config: Config) void {
     update_check_mutex.lock();
     defer update_check_mutex.unlock();
-
-    // Only allow config changes before first use
     if (!update_check_triggered) {
         global_config = config;
     }
@@ -66,41 +36,22 @@ pub fn getConfig() Config {
     return global_config;
 }
 
-/// Internal function to trigger automatic update check on first library use.
-/// This is called automatically - users don't need to call this.
 fn triggerAutoUpdateCheck(allocator: std.mem.Allocator) void {
     update_check_mutex.lock();
     defer update_check_mutex.unlock();
-
     if (update_check_triggered) return;
     update_check_triggered = true;
-
     if (global_config.auto_update_check and global_config.show_update_notifications) {
         update_thread = report.checkForUpdates(allocator);
     }
 }
 
-/// Disable automatic update checking. Convenience function.
-/// Call this at the start of your program before using any library functions.
-///
-/// Example:
-/// ```zig
-/// const z = @import("zigantic");
-///
-/// pub fn main() !void {
-///     z.disableUpdateCheck();
-///
-///     // Use library normally...
-/// }
-/// ```
+/// Disable automatic update checking.
 pub fn disableUpdateCheck() void {
     setConfig(.{ .auto_update_check = false, .show_update_notifications = false });
 }
 
-// ============================================================================
-// STRING TYPES
-// ============================================================================
-
+// String Types
 pub const String = types.String;
 pub const NonEmptyString = types.NonEmptyString;
 pub const Trimmed = types.Trimmed;
@@ -111,10 +62,7 @@ pub const AsciiString = types.AsciiString;
 pub const Secret = types.Secret;
 pub const StrongPassword = types.StrongPassword;
 
-// ============================================================================
-// NUMBER TYPES
-// ============================================================================
-
+// Number Types
 pub const Int = types.Int;
 pub const UInt = types.UInt;
 pub const PositiveInt = types.PositiveInt;
@@ -130,10 +78,7 @@ pub const PositiveFloat = types.PositiveFloat;
 pub const NegativeFloat = types.NegativeFloat;
 pub const FiniteFloat = types.FiniteFloat;
 
-// ============================================================================
-// FORMAT TYPES
-// ============================================================================
-
+// Format Types
 pub const Email = types.Email;
 pub const Url = types.Url;
 pub const HttpsUrl = types.HttpsUrl;
@@ -145,19 +90,24 @@ pub const Semver = types.Semver;
 pub const PhoneNumber = types.PhoneNumber;
 pub const CreditCard = types.CreditCard;
 pub const Regex = types.Regex;
+pub const Base64 = types.Base64;
+pub const HexString = types.HexString;
+pub const HexColor = types.HexColor;
+pub const MacAddress = types.MacAddress;
+pub const IsoDateTime = types.IsoDateTime;
+pub const IsoDate = types.IsoDate;
+pub const CountryCode = types.CountryCode;
+pub const CurrencyCode = types.CurrencyCode;
+pub const Latitude = types.Latitude;
+pub const Longitude = types.Longitude;
+pub const Port = types.Port;
 
-// ============================================================================
-// COLLECTION TYPES
-// ============================================================================
-
+// Collection Types
 pub const List = types.List;
 pub const NonEmptyList = types.NonEmptyList;
 pub const FixedList = types.FixedList;
 
-// ============================================================================
-// SPECIAL TYPES
-// ============================================================================
-
+// Special Types
 pub const Default = types.Default;
 pub const Custom = types.Custom;
 pub const Transform = types.Transform;
@@ -169,10 +119,7 @@ pub const Range = types.Range;
 pub const Nullable = types.Nullable;
 pub const Lazy = types.Lazy;
 
-// ============================================================================
-// CONVENIENCE FUNCTIONS
-// ============================================================================
-
+// Convenience Functions
 pub fn string(comptime min: usize, comptime max: usize) type {
     return String(min, max);
 }
@@ -221,108 +168,90 @@ pub fn multipleOf(comptime T: type, comptime divisor: comptime_int) type {
 pub fn nullable(comptime T: type) type {
     return Nullable(T);
 }
+pub fn hexString(comptime min: usize, comptime max: usize) type {
+    return HexString(min, max);
+}
+pub fn latitude() type {
+    return Latitude;
+}
+pub fn longitude() type {
+    return Longitude;
+}
+pub fn port() type {
+    return Port;
+}
 
-// ============================================================================
-// JSON FUNCTIONS
-// ============================================================================
-
+// JSON Serialization/Deserialization
 pub const ParseResult = json.ParseResult;
 pub const ValidationError = errors.ValidationError;
 
-/// Parse JSON with automatic validation.
-/// Automatically checks for library updates on first use.
+/// Parse JSON string into a validated struct (deserialization).
 pub fn fromJson(comptime T: type, json_string: []const u8, allocator: std.mem.Allocator) !ParseResult(T) {
     triggerAutoUpdateCheck(allocator);
     return json.fromJson(T, json_string, allocator);
 }
 
-/// Serialize a value to JSON.
-/// Automatically checks for library updates on first use.
+/// Serialize a value to compact JSON string.
 pub fn toJson(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
     triggerAutoUpdateCheck(allocator);
     return json.toJson(value, allocator);
 }
 
-/// Serialize a value to pretty-printed JSON.
-/// Automatically checks for library updates on first use.
+/// Serialize a value to pretty-printed JSON string.
 pub fn toJsonPretty(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
     triggerAutoUpdateCheck(allocator);
     return json.toJsonPretty(value, allocator);
 }
 
-// ============================================================================
-// VALIDATION HELPERS
-// ============================================================================
-
-/// Validate a value directly.
+// Validation Helpers
 pub fn validate(comptime T: type, value: anytype) errors.ValidationError!T {
     return T.init(value);
 }
 
-/// Check if value is valid without throwing.
 pub fn isValid(comptime T: type, value: anytype) bool {
     _ = T.init(value) catch return false;
     return true;
 }
 
-/// Get error message for a validation error.
 pub fn errorMessage(err: errors.ValidationError) []const u8 {
     return errors.errorMessage(err);
 }
 
-/// Get error code for a validation error.
 pub fn errorCode(err: errors.ValidationError) []const u8 {
     return errors.errorCode(err);
 }
 
-// ============================================================================
-// VERSION AND REPORTING
-// ============================================================================
-
-/// URL for reporting issues on GitHub.
+// Version and Reporting
 pub const ISSUES_URL = report.ISSUES_URL;
 
-/// Get the current library version.
 pub fn getVersion() []const u8 {
     return version.version;
 }
 
-/// Get the full version string with 'v' prefix.
 pub fn getVersionString() []const u8 {
     return version.getVersionString();
 }
 
-/// Report an internal library error (for library bugs only, NOT validation errors).
-/// Use this when you encounter an unexpected error that might be a bug in zigantic.
-/// Do NOT use this for validation errors - those are expected behavior.
 pub fn reportInternalError(message: []const u8) void {
     report.reportInternalError(message);
 }
 
-/// Report an internal library error with error code (for library bugs only).
 pub fn reportInternalErrorWithCode(err: anyerror) void {
     report.reportInternalErrorWithCode(err);
 }
 
-// Legacy aliases
 pub const reportError = reportInternalErrorWithCode;
 pub const reportErrorMessage = reportInternalError;
 
-/// Check for library updates in a background thread.
-/// Returns a thread handle that can be joined on shutdown.
 pub fn checkForUpdates(allocator: std.mem.Allocator) ?std.Thread {
     return report.checkForUpdates(allocator);
 }
 
-/// Synchronously check for updates and get update info.
 pub fn checkForUpdatesSync(allocator: std.mem.Allocator) !report.UpdateInfo {
     return report.checkForUpdatesSync(allocator);
 }
 
-// ============================================================================
-// TESTS
-// ============================================================================
-
+// Tests
 test "String basic" {
     const Name = String(1, 50);
     const name = try Name.init("Alice");
