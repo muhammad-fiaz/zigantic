@@ -1,5 +1,5 @@
 <div align="center">
-<img  alt="logo" src="https://github.com/user-attachments/assets/d06bd115-2a70-423c-b293-975a3f38c3af" />
+<img alt="logo" src="https://github.com/user-attachments/assets/90082000-30ab-4ca6-992d-247d1b1e706b" />
 
 <a href="https://muhammad-fiaz.github.io/zigantic/"><img src="https://img.shields.io/badge/docs-muhammad--fiaz.github.io-blue" alt="Documentation"></a>
 <a href="https://ziglang.org/"><img src="https://img.shields.io/badge/Zig-0.15.0+-orange.svg?logo=zig" alt="Zig Version"></a>
