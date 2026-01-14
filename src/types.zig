@@ -6,7 +6,6 @@ const std = @import("std");
 const validators = @import("validators.zig");
 const errors = @import("errors.zig");
 
-
 /// String with length constraints and helper methods.
 pub fn String(comptime min_len: usize, comptime max_len: usize) type {
     return struct {
@@ -260,7 +259,6 @@ pub fn StrongPassword(comptime min_len: usize, comptime max_len: usize) type {
     };
 }
 
-
 /// Signed integer with range and utilities.
 pub fn Int(comptime T: type, comptime min_val: comptime_int, comptime max_val: comptime_int) type {
     return struct {
@@ -474,7 +472,6 @@ pub fn FiniteFloat(comptime T: type) type {
         }
     };
 }
-
 
 /// Email with utilities.
 pub const Email = struct {
@@ -991,7 +988,6 @@ pub const Port = struct {
     }
 };
 
-
 pub fn List(comptime T: type, comptime min_len: usize, comptime max_len: usize) type {
     return struct {
         const Self = @This();
@@ -1052,7 +1048,6 @@ pub fn FixedList(comptime T: type, comptime exact_len: usize) type {
         }
     };
 }
-
 
 pub fn Default(comptime T: type, comptime default_value: T) type {
     return struct {
@@ -1293,7 +1288,6 @@ pub fn Lazy(comptime T: type) type {
         }
     };
 }
-
 
 test "String basic" {
     const Name = String(1, 50);

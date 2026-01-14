@@ -4,7 +4,6 @@
 
 const std = @import("std");
 
-
 /// Email format.
 pub fn isValidEmail(str: []const u8) bool {
     if (str.len == 0 or str.len > 254) return false;
@@ -185,7 +184,6 @@ pub fn isJwt(str: []const u8) bool {
     return parts == 2;
 }
 
-
 pub fn isAlphanumeric(str: []const u8) bool {
     for (str) |c| {
         if (!std.ascii.isAlphanumeric(c)) return false;
@@ -263,7 +261,6 @@ pub fn endsWith(str: []const u8, suffix: []const u8) bool {
     return std.mem.endsWith(u8, str, suffix);
 }
 
-
 pub fn matchesPattern(comptime pattern: []const u8, str: []const u8) bool {
     var pat_idx: usize = 0;
     var str_idx: usize = 0;
@@ -302,7 +299,6 @@ fn matchesClass(class: []const u8, c: u8) bool {
     }
     return false;
 }
-
 
 test "isValidEmail - valid" {
     try std.testing.expect(isValidEmail("user@example.com"));

@@ -181,7 +181,6 @@ pub fn getIssuesUrl() []const u8 {
     return ISSUES_URL;
 }
 
-
 test "stripVersionPrefix" {
     try std.testing.expectEqualStrings("1.0.0", stripVersionPrefix("v1.0.0"));
     try std.testing.expectEqualStrings("1.0.0", stripVersionPrefix("V1.0.0"));

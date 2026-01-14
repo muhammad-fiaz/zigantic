@@ -4,7 +4,6 @@
 
 const std = @import("std");
 
-
 pub const ValidationError = error{
     // String errors
     TooShort,
@@ -72,7 +71,6 @@ pub const ValidationError = error{
     ParseError,
 };
 
-
 pub const FieldError = struct {
     field: []const u8,
     message: []const u8,
@@ -94,7 +92,6 @@ pub const FieldError = struct {
         return std.fmt.allocPrint(allocator, "{{\"field\":\"{s}\",\"message\":\"{s}\"}}", .{ self.field, self.message });
     }
 };
-
 
 pub const ErrorList = struct {
     errors: std.ArrayListUnmanaged(FieldError),
@@ -246,7 +243,6 @@ pub const ErrorList = struct {
     }
 };
 
-
 pub fn errorMessage(err: ValidationError) []const u8 {
     return switch (err) {
         error.TooShort => "value is too short",
@@ -300,7 +296,6 @@ pub fn errorCode(err: ValidationError) []const u8 {
         else => "E000",
     };
 }
-
 
 test "ErrorList add single" {
     var errors = ErrorList.init(std.testing.allocator);
