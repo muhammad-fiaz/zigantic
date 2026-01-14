@@ -87,7 +87,7 @@ jobs:
         run: |
           gh release upload "${{ github.event.release.tag_name }}" release/* --clobber || true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
   update-release:
     name: Update Release Description
