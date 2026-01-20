@@ -155,7 +155,7 @@ pub fn main() !void {
 }
 ```
 
-## 📚 All Types
+## All Types
 
 ### String Types (9)
 
@@ -269,7 +269,7 @@ f.trunc()        // Truncate
 | `Nullable(T)`          | Explicit null       | `isNull()`, `unwrapOr()`        |
 | `Lazy(T)`              | Lazy evaluation     | `isComputed()`, `reset()`       |
 
-## 🔧 Validators
+## Validators
 
 Direct validation functions without types:
 
@@ -300,7 +300,7 @@ v.isHexString("0123abcdef")            // true
 v.matchesPattern("[0-9][0-9][0-9]", "123")  // true
 ```
 
-## ❌ Error Handling
+## Error Handling
 
 ```zig
 // Error messages and codes
@@ -336,7 +336,7 @@ const json = try errors.toJsonArray(allocator);
 | E021 | TypeMismatch           | wrong type            |
 | E099 | CustomValidationFailed | validation failed     |
 
-## 🏃 Examples
+## Examples
 
 The library includes 5 comprehensive examples:
 
@@ -348,7 +348,7 @@ zig build run-json_example    # Full JSON workflow
 zig build run-error_handling  # Error management
 ```
 
-## 🔨 Building
+## Building
 
 ```bash
 zig build            # Build library
@@ -356,6 +356,6 @@ zig build test       # Run 102 tests
 zig build example    # Run basic example
 ```
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
