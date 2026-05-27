@@ -1,6 +1,6 @@
 # Introduction
 
-**zigantic** is a Pydantic-like data validation library for Zig. It brings the power of type-safe validation to Zig, using the type system for compile-time guarantees.
+**zigantic** is a data validation library for Zig. It brings the power of type-safe validation to Zig, using the type system for compile-time guarantees.
 
 ## What is zigantic?
 
@@ -54,7 +54,7 @@ pub fn main() !void {
     std.debug.print("Domain: {s}\n", .{email.domain()});
 
     // JSON parsing
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

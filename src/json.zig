@@ -7,6 +7,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const errors = @import("errors.zig");
+const utils = @import("utils.zig");
 
 /// Result of a JSON parsing operation.
 ///
@@ -143,8 +144,7 @@ fn parseZiganticType(
         };
 
         return T.init(str) catch |err| {
-            const msg = getValidationMessage(T, err);
-            try addError(error_list, path, err, msg, str);
+            try addValidationErr(T, error_list, path, err, str);
             return null;
         };
     }
@@ -167,8 +167,7 @@ fn parseZiganticType(
         };
 
         return T.init(str) catch |err| {
-            const msg = getValidationMessage(T, err);
-            try addError(error_list, path, err, msg, str);
+            try addValidationErr(T, error_list, path, err, str);
             return null;
         };
     }
@@ -194,10 +193,9 @@ fn parseZiganticType(
             };
 
             return T.init(casted) catch |err| {
-                const msg = getValidationMessage(T, err);
                 var buf: [32]u8 = undefined;
                 const val_str = std.fmt.bufPrint(&buf, "{d}", .{val}) catch "?";
-                try addError(error_list, path, err, msg, val_str);
+                try addValidationErr(T, error_list, path, err, val_str);
                 return null;
             };
         } else {
@@ -208,8 +206,7 @@ fn parseZiganticType(
             };
 
             return T.init(casted) catch |err| {
-                const msg = getValidationMessage(T, err);
-                try addError(error_list, path, err, msg, null);
+                try addValidationErr(T, error_list, path, err, null);
                 return null;
             };
         }
@@ -232,15 +229,13 @@ fn parseZiganticType(
             const FloatType = T.FloatType;
             const casted: FloatType = @floatCast(val);
             return T.init(casted) catch |err| {
-                const msg = getValidationMessage(T, err);
-                try addError(error_list, path, err, msg, null);
+                try addValidationErr(T, error_list, path, err, null);
                 return null;
             };
         } else {
             // Latitude/Longitude use f64 directly
             return T.init(val) catch |err| {
-                const msg = getValidationMessage(T, err);
-                try addError(error_list, path, err, msg, null);
+                try addValidationErr(T, error_list, path, err, null);
                 return null;
             };
         }
@@ -275,14 +270,13 @@ fn parseZiganticType(
         }
 
         return T.init(items[0..valid_count]) catch |err| {
-            const msg = getValidationMessage(T, err);
-            try addError(error_list, path, err, msg, null);
+            try addValidationErr(T, error_list, path, err, null);
             return null;
         };
     }
 
-    // Default type
-    if (zigantic_type == .default) {
+    // Default / DefaultFactory type
+    if (zigantic_type == .default or zigantic_type == .default_factory) {
         const ValueType = T.ValueType;
         if (json_value == .null) {
             return T.initDefault();
@@ -296,8 +290,7 @@ fn parseZiganticType(
         const ValueType = T.ValueType;
         const inner = try parseValue(ValueType, json_value, allocator, error_list, path) orelse return null;
         return T.init(inner) catch |err| {
-            const msg = getValidationMessage(T, err);
-            try addError(error_list, path, err, msg, null);
+            try addValidationErr(T, error_list, path, err, null);
             return null;
         };
     }
@@ -314,8 +307,7 @@ fn parseZiganticType(
         const FromType = T.FromType;
         const inner = try parseValue(FromType, json_value, allocator, error_list, path) orelse return null;
         return T.init(inner) catch |err| {
-            const msg = getValidationMessage(T, err);
-            try addError(error_list, path, err, msg, null);
+            try addValidationErr(T, error_list, path, err, null);
             return null;
         };
     }
@@ -325,8 +317,7 @@ fn parseZiganticType(
         const ValueType = T.ValueType;
         const inner = try parseValue(ValueType, json_value, allocator, error_list, path) orelse return null;
         return T.init(inner) catch |err| {
-            const msg = getValidationMessage(T, err);
-            try addError(error_list, path, err, msg, null);
+            try addValidationErr(T, error_list, path, err, null);
             return null;
         };
     }
@@ -352,8 +343,7 @@ fn parseZiganticType(
         };
 
         return T.init(str) catch |err| {
-            const msg = getValidationMessage(T, err);
-            try addError(error_list, path, err, msg, str);
+            try addValidationErr(T, error_list, path, err, str);
             return null;
         };
     }
@@ -390,9 +380,26 @@ fn parseStruct(
         else
             field.name;
 
-        if (obj.get(field.name)) |field_value| {
-            if (try parseValue(field.type, field_value, allocator, error_list, field_path)) |parsed| {
-                @field(result, field.name) = parsed;
+        const json_field_name = comptime utils.getFieldAlias(T, field.name);
+        const field_value = obj.get(field.name) orelse obj.get(json_field_name);
+
+        if (field_value) |fv| {
+            if (try parseValue(field.type, fv, allocator, error_list, field_path)) |parsed| {
+                var final_val = parsed;
+                const has_validator = comptime @hasDecl(T, "validate_" ++ field.name);
+                var field_ok = true;
+                if (comptime has_validator) {
+                    const validator_fn = @field(T, "validate_" ++ field.name);
+                    final_val = validator_fn(parsed) catch |err| blk: {
+                        try handleFieldValidatorErr(error_list, field_path, err);
+                        has_errors = true;
+                        field_ok = false;
+                        break :blk parsed;
+                    };
+                }
+                if (field_ok) {
+                    @field(result, field.name) = final_val;
+                }
             } else {
                 has_errors = true;
             }
@@ -400,6 +407,21 @@ fn parseStruct(
             // Field is missing from JSON
             if (handleMissingField(T, field, &result)) |_| {
                 // Field was handled (has default or is optional)
+                var final_val = @field(result, field.name);
+                const has_validator = comptime @hasDecl(T, "validate_" ++ field.name);
+                var field_ok = true;
+                if (comptime has_validator) {
+                    const validator_fn = @field(T, "validate_" ++ field.name);
+                    final_val = validator_fn(final_val) catch |err| blk: {
+                        try handleFieldValidatorErr(error_list, field_path, err);
+                        has_errors = true;
+                        field_ok = false;
+                        break :blk @field(result, field.name);
+                    };
+                }
+                if (field_ok) {
+                    @field(result, field.name) = final_val;
+                }
             } else |_| {
                 // Build error message at runtime
                 var msg_buf: [256]u8 = undefined;
@@ -413,6 +435,8 @@ fn parseStruct(
     if (has_errors) {
         return null;
     }
+
+    if (!try runModelValidator(T, result, error_list, path)) return null;
 
     return result;
 }
@@ -428,11 +452,13 @@ fn handleMissingField(comptime T: type, comptime field: std.builtin.Type.StructF
         return;
     }
 
-    // Check if it's a zigantic Default type (must be a struct first)
+    // Check if it's a zigantic Default or DefaultFactory type (must be a struct first)
     if (field_info == .@"struct") {
-        if (@hasDecl(FieldType, "zigantic_type") and FieldType.zigantic_type == .default) {
-            @field(result, field.name) = FieldType.initDefault();
-            return;
+        if (@hasDecl(FieldType, "zigantic_type")) {
+            if (FieldType.zigantic_type == .default or FieldType.zigantic_type == .default_factory) {
+                @field(result, field.name) = FieldType.initDefault();
+                return;
+            }
         }
     }
 
@@ -558,8 +584,50 @@ fn addError(
     try error_list.add(field_name, err, message, value);
 }
 
+/// Add a validation error with an auto-resolved message for a zigantic type.
+fn addValidationErr(comptime T: type, error_list: *errors.ErrorList, path: []const u8, err: errors.ValidationError, value: ?[]const u8) !void {
+    const msg = getValidationMessage(T, err);
+    try addError(error_list, path, err, msg, value);
+}
+
+/// Handle a field-level validator error (returns false if field should be skipped).
+fn handleFieldValidatorErr(error_list: *errors.ErrorList, field_path: []const u8, err: anyerror) !void {
+    var err_msg_buf: [256]u8 = undefined;
+    const err_msg = std.fmt.bufPrint(&err_msg_buf, "field validator failed: {s}", .{@errorName(err)}) catch "field validation failed";
+    try addError(error_list, field_path, errors.ValidationError.CustomValidationFailed, err_msg, null);
+}
+
+/// Run model-level validator if present. Returns true if validation passed.
+fn runModelValidator(comptime T: type, result: T, error_list: *errors.ErrorList, path: []const u8) !bool {
+    if (!comptime @hasDecl(T, "validateModel")) return true;
+    const validator_fn = @field(T, "validateModel");
+    const call_res = blk: {
+        const FnType = @TypeOf(validator_fn);
+        const params = @typeInfo(FnType).@"fn".params;
+        if (params.len > 0) {
+            const first_param_type = params[0].type.?;
+            if (first_param_type == T) {
+                break :blk validator_fn(result);
+            } else if (first_param_type == *const T or first_param_type == *T) {
+                break :blk validator_fn(&result);
+            }
+        }
+        break :blk validator_fn();
+    };
+    call_res catch |err| {
+        var err_msg_buf: [256]u8 = undefined;
+        const err_msg = std.fmt.bufPrint(&err_msg_buf, "model validator failed: {s}", .{@errorName(err)}) catch "model validation failed";
+        try addError(error_list, path, errors.ValidationError.CustomValidationFailed, err_msg, null);
+        return false;
+    };
+    return true;
+}
+
 /// Get a validation message for a zigantic type error.
 fn getValidationMessage(comptime T: type, err: errors.ValidationError) []const u8 {
+    if (@hasDecl(T, "custom_messages")) {
+        if (errors.messageForConfig(err, T.custom_messages)) |msg| return msg;
+    }
     return switch (err) {
         error.TooShort => if (@hasDecl(T, "min"))
             std.fmt.comptimePrint("must be at least {d} characters", .{T.min})
@@ -596,10 +664,6 @@ fn getValidationMessage(comptime T: type, err: errors.ValidationError) []const u
     };
 }
 
-// ============================================================================
-// Serialization (toJson)
-// ============================================================================
-
 /// Serialize a value to JSON string.
 pub fn toJson(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
     return toJsonInternal(value, allocator, false);
@@ -611,7 +675,7 @@ pub fn toJsonPretty(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
 }
 
 fn toJsonInternal(value: anytype, allocator: std.mem.Allocator, pretty: bool) ![]const u8 {
-    var buffer = std.ArrayListUnmanaged(u8){};
+    var buffer = std.ArrayList(u8).empty;
     errdefer buffer.deinit(allocator);
 
     try writeJson(@TypeOf(value), value, &buffer, allocator, 0, pretty);
@@ -622,7 +686,7 @@ fn toJsonInternal(value: anytype, allocator: std.mem.Allocator, pretty: bool) ![
 fn writeJson(
     comptime T: type,
     value: T,
-    buffer: *std.ArrayListUnmanaged(u8),
+    buffer: *std.ArrayList(u8),
     allocator: std.mem.Allocator,
     depth: usize,
     pretty: bool,
@@ -707,7 +771,8 @@ fn writeJson(
                 try buffer.appendNTimes(allocator, ' ', (depth + 1) * 2);
             }
 
-            try writeJsonString(field.name, buffer, allocator);
+            const json_field_name = comptime utils.getFieldAlias(T, field.name);
+            try writeJsonString(json_field_name, buffer, allocator);
             try buffer.append(allocator, ':');
             if (pretty) try buffer.append(allocator, ' ');
 
@@ -726,7 +791,7 @@ fn writeJson(
     try buffer.appendSlice(allocator, "null");
 }
 
-fn writeJsonString(str: []const u8, buffer: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !void {
+fn writeJsonString(str: []const u8, buffer: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
     try buffer.append(allocator, '"');
 
     for (str) |c| {
@@ -737,7 +802,7 @@ fn writeJsonString(str: []const u8, buffer: *std.ArrayListUnmanaged(u8), allocat
             '\r' => try buffer.appendSlice(allocator, "\\r"),
             '\t' => try buffer.appendSlice(allocator, "\\t"),
             else => {
-                if (c < 0x20) {
+                if (std.ascii.isControl(c)) {
                     try buffer.appendSlice(allocator, "\\u00");
                     const hex = "0123456789abcdef";
                     try buffer.append(allocator, hex[c >> 4]);
@@ -954,5 +1019,519 @@ test "toJsonPretty" {
     defer allocator.free(json_str);
 
     // Verify it contains newlines (pretty printed)
-    try std.testing.expect(std.mem.indexOf(u8, json_str, "\n") != null);
+    try std.testing.expect(std.mem.find(u8, json_str, "\n") != null);
+}
+
+/// Parse a URL query string or form urlencoded string into a validated struct.
+pub fn fromQueryString(comptime T: type, query_string: []const u8, allocator: std.mem.Allocator) !ParseResult(T) {
+    var result = ParseResult(T){
+        .value = null,
+        .error_list = errors.ErrorList.init(allocator),
+        .allocator = allocator,
+        .arena = std.heap.ArenaAllocator.init(allocator),
+    };
+    errdefer result.deinit();
+
+    const arena_alloc = result.arena.allocator();
+
+    var map = std.StringHashMap([]const u8).init(arena_alloc);
+
+    var it = std.mem.tokenizeScalar(u8, query_string, '&');
+    while (it.next()) |pair| {
+        if (pair.len == 0) continue;
+        const eq_idx = std.mem.findScalar(u8, pair, '=') orelse {
+            const decoded_key = try decodeUrlComponent(pair, arena_alloc);
+            try map.put(decoded_key, "");
+            continue;
+        };
+        const key = pair[0..eq_idx];
+        const val = pair[eq_idx + 1 ..];
+
+        const decoded_key = try decodeUrlComponent(key, arena_alloc);
+        const decoded_val = try decodeUrlComponent(val, arena_alloc);
+        try map.put(decoded_key, decoded_val);
+    }
+
+    result.value = try parseQueryMap(T, &map, arena_alloc, &result.error_list, "");
+    return result;
+}
+
+fn decodeUrlComponent(input: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+    if (input.len == 0) return "";
+    const temp = try allocator.alloc(u8, input.len);
+    defer allocator.free(temp);
+    for (input, 0..) |c, i| {
+        temp[i] = if (c == '+') ' ' else c;
+    }
+    const decoded = std.Uri.percentDecodeInPlace(temp);
+    return try allocator.dupe(u8, decoded);
+}
+
+fn parseQueryMap(
+    comptime T: type,
+    map: *std.StringHashMap([]const u8),
+    allocator: std.mem.Allocator,
+    error_list: *errors.ErrorList,
+    path: []const u8,
+) !?T {
+    const info = @typeInfo(T);
+
+    if (info == .optional) {
+        const Child = info.optional.child;
+        return parseQueryMap(Child, map, allocator, error_list, path) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return null;
+        };
+    }
+
+    const is_container = comptime switch (info) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => true,
+        else => false,
+    };
+
+    if (comptime is_container) {
+        if (@hasDecl(T, "init") and @hasDecl(T, "get")) {
+            const value_str = map.get(path) orelse {
+                if (@hasDecl(T, "initDefault")) {
+                    return T.initDefault();
+                }
+                try error_list.add(path, errors.ValidationError.MissingField, "field is required", null);
+                return null;
+            };
+
+            const init_fn_info = @typeInfo(@TypeOf(T.init)).@"fn";
+            const ExpectedType = init_fn_info.params[0].type.?;
+
+            const coerced_val = coerceQueryValue(ExpectedType, value_str, allocator) catch {
+                try error_list.add(path, errors.ValidationError.InvalidFormat, "invalid value format", value_str);
+                return null;
+            };
+
+            const init_return_type = @typeInfo(@TypeOf(T.init)).@"fn".return_type.?;
+            const val = blk: {
+                switch (@typeInfo(init_return_type)) {
+                    .error_union => {
+                        break :blk T.init(coerced_val) catch |err| {
+                            try addValidationErr(T, error_list, path, err, value_str);
+                            return null;
+                        };
+                    },
+                    else => {
+                        break :blk T.init(coerced_val);
+                    },
+                }
+            };
+            return val;
+        }
+    }
+
+    if (info == .@"struct") {
+        var result: T = undefined;
+        var has_errors = false;
+
+        inline for (info.@"struct".fields) |field| {
+            const json_field_name = comptime utils.getFieldAlias(T, field.name);
+
+            const alias_path = if (path.len == 0) json_field_name else try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path, json_field_name });
+            defer if (path.len > 0) allocator.free(alias_path);
+
+            const field_path = if (path.len == 0) field.name else try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path, field.name });
+            defer if (path.len > 0) allocator.free(field_path);
+
+            const chosen_path = if (map.contains(alias_path)) alias_path else field_path;
+
+            if (map.contains(chosen_path)) {
+                if (parseQueryMap(field.type, map, allocator, error_list, chosen_path)) |parsed_field| {
+                    if (parsed_field) |val| {
+                        var final_val = val;
+                        const has_validator = comptime @hasDecl(T, "validate_" ++ field.name);
+                        var field_ok = true;
+                        if (comptime has_validator) {
+                            const validator_fn = @field(T, "validate_" ++ field.name);
+                            final_val = validator_fn(val) catch |err| blk: {
+                                try handleFieldValidatorErr(error_list, chosen_path, err);
+                                has_errors = true;
+                                field_ok = false;
+                                break :blk val;
+                            };
+                        }
+                        if (field_ok) {
+                            @field(result, field.name) = final_val;
+                        }
+                    } else {
+                        const field_info = @typeInfo(field.type);
+                        if (field_info == .optional) {
+                            @field(result, field.name) = null;
+                        } else {
+                            has_errors = true;
+                        }
+                    }
+                } else |err| {
+                    if (err == error.OutOfMemory) return err;
+                    has_errors = true;
+                }
+            } else {
+                // Field is missing from query string Map!
+                if (handleMissingField(T, field, &result)) |_| {
+                    // Field was handled (has default or is optional)
+                    var final_val = @field(result, field.name);
+                    const has_validator = comptime @hasDecl(T, "validate_" ++ field.name);
+                    var field_ok = true;
+                    if (comptime has_validator) {
+                        const validator_fn = @field(T, "validate_" ++ field.name);
+                        final_val = validator_fn(final_val) catch |err| blk: {
+                            try handleFieldValidatorErr(error_list, chosen_path, err);
+                            has_errors = true;
+                            field_ok = false;
+                            break :blk @field(result, field.name);
+                        };
+                    }
+                    if (field_ok) {
+                        @field(result, field.name) = final_val;
+                    }
+                } else |_| {
+                    try error_list.add(chosen_path, errors.ValidationError.MissingField, "field is required", null);
+                    has_errors = true;
+                }
+            }
+        }
+
+        if (has_errors or error_list.count() > 0) return null;
+
+        if (!try runModelValidator(T, result, error_list, path)) return null;
+
+        return result;
+    }
+
+    return coerceQueryValue(T, map.get(path) orelse return null, allocator) catch null;
+}
+
+fn coerceQueryValue(comptime T: type, str: []const u8, allocator: std.mem.Allocator) !T {
+    const info = @typeInfo(T);
+    switch (info) {
+        .bool => {
+            if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "on")) return true;
+            if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "")) return false;
+            return error.InvalidFormat;
+        },
+        .int => {
+            return std.fmt.parseInt(T, str, 10);
+        },
+        .float => {
+            return std.fmt.parseFloat(T, str);
+        },
+        .pointer => |ptr| {
+            if (ptr.size == .slice and ptr.child == u8) {
+                return try allocator.dupe(u8, str);
+            }
+        },
+        else => {},
+    }
+    return error.UnsupportedType;
+}
+
+/// Serialize a value to URL query / form urlencoded string.
+pub fn toQueryString(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
+    var list = std.ArrayList(u8).empty;
+    defer list.deinit(allocator);
+
+    try writeQueryValue(value, &list, allocator, "");
+
+    return list.toOwnedSlice(allocator);
+}
+
+fn writeQueryValue(value: anytype, list: *std.ArrayList(u8), allocator: std.mem.Allocator, path: []const u8) !void {
+    const T = @TypeOf(value);
+    const info = @typeInfo(T);
+
+    if (info == .optional) {
+        if (value) |val| {
+            try writeQueryValue(val, list, allocator, path);
+        }
+        return;
+    }
+
+    const is_container = comptime switch (info) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => true,
+        else => false,
+    };
+
+    if (comptime is_container) {
+        if (@hasDecl(T, "get")) {
+            const unwrapped = value.get();
+            try writeQueryKeyValue(path, unwrapped, list, allocator);
+            return;
+        }
+    }
+
+    if (info == .@"struct") {
+        inline for (info.@"struct".fields) |field| {
+            const json_field_name = comptime utils.getFieldAlias(T, field.name);
+            const field_path = if (path.len == 0) json_field_name else try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path, json_field_name });
+            defer if (path.len > 0) allocator.free(field_path);
+
+            try writeQueryValue(@field(value, field.name), list, allocator, field_path);
+        }
+        return;
+    }
+
+    try writeQueryKeyValue(path, value, list, allocator);
+}
+
+fn writeQueryKeyValue(key: []const u8, value: anytype, list: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
+    if (list.items.len > 0) {
+        try list.append(allocator, '&');
+    }
+
+    var key_buf: [256]u8 = undefined;
+    const encoded_key = try encodeUrlComponent(key, &key_buf, allocator);
+    try list.appendSlice(allocator, encoded_key);
+
+    try list.append(allocator, '=');
+
+    const V = @TypeOf(value);
+    const v_info = @typeInfo(V);
+
+    if (v_info == .pointer and v_info.pointer.size == .slice and v_info.pointer.child == u8) {
+        var val_buf: [1024]u8 = undefined;
+        const encoded_val = try encodeUrlComponent(value, &val_buf, allocator);
+        try list.appendSlice(allocator, encoded_val);
+    } else {
+        var str_buf: [128]u8 = undefined;
+        const str = try std.fmt.bufPrint(&str_buf, "{}", .{value});
+        var val_buf: [256]u8 = undefined;
+        const encoded_val = try encodeUrlComponent(str, &val_buf, allocator);
+        try list.appendSlice(allocator, encoded_val);
+    }
+}
+
+fn encodeUrlComponent(input: []const u8, buf: []u8, allocator: std.mem.Allocator) ![]const u8 {
+    _ = allocator;
+    var fbs = std.Io.Writer.fixed(buf);
+    for (input) |c| {
+        if (std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~') {
+            try fbs.writeByte(c);
+        } else if (c == ' ') {
+            try fbs.writeByte('+');
+        } else {
+            try fbs.print("%{X:0>2}", .{c});
+        }
+    }
+    return fbs.buffered();
+}
+
+test "query string serialization and deserialization" {
+    const allocator = std.testing.allocator;
+
+    const User = struct {
+        name: types.String(1, 50),
+        age: types.Int(i32, 0, 150),
+        active: bool,
+    };
+
+    const qs = "name=Alice+Johnson&age=25&active=true";
+    var result = try fromQueryString(User, qs, allocator);
+    defer result.deinit();
+
+    try std.testing.expect(result.isValid());
+    const user = result.value.?;
+    try std.testing.expectEqualStrings("Alice Johnson", user.name.get());
+    try std.testing.expectEqual(@as(i32, 25), user.age.get());
+    try std.testing.expectEqual(true, user.active);
+
+    const serialized = try toQueryString(user, allocator);
+    defer allocator.free(serialized);
+    try std.testing.expectEqualStrings("name=Alice+Johnson&age=25&active=true", serialized);
+}
+
+test "json and query field aliases and naming conventions" {
+    const allocator = std.testing.allocator;
+
+    // 1. Struct with explicit aliases
+    const ExplicitUser = struct {
+        user_name: types.String(1, 50),
+        user_age: i32,
+
+        pub const zigantic_aliases = .{
+            .user_name = "username",
+            .user_age = "age",
+        };
+    };
+
+    const explicit_json = "{\"username\":\"Bob\",\"age\":42}";
+    var result_explicit = try fromJson(ExplicitUser, explicit_json, allocator);
+    defer result_explicit.deinit();
+
+    try std.testing.expect(result_explicit.isValid());
+    const user_explicit = result_explicit.value.?;
+    try std.testing.expectEqualStrings("Bob", user_explicit.user_name.get());
+    try std.testing.expectEqual(@as(i32, 42), user_explicit.user_age);
+
+    const explicit_serialized = try toJson(user_explicit, allocator);
+    defer allocator.free(explicit_serialized);
+    try std.testing.expect(std.mem.find(u8, explicit_serialized, "\"username\":\"Bob\"") != null);
+    try std.testing.expect(std.mem.find(u8, explicit_serialized, "\"age\":42") != null);
+
+    // 2. Struct with automatic naming policy (camelCase -> snake_case)
+    const CamelUser = struct {
+        firstName: []const u8,
+        lastName: []const u8,
+
+        pub const zigantic_naming = utils.NamingPolicy.snake_case;
+    };
+
+    const snake_json = "{\"first_name\":\"Alice\",\"last_name\":\"Smith\"}";
+    var result_camel = try fromJson(CamelUser, snake_json, allocator);
+    defer result_camel.deinit();
+
+    try std.testing.expect(result_camel.isValid());
+    const user_camel = result_camel.value.?;
+    try std.testing.expectEqualStrings("Alice", user_camel.firstName);
+    try std.testing.expectEqualStrings("Smith", user_camel.lastName);
+
+    const camel_serialized = try toJson(user_camel, allocator);
+    defer allocator.free(camel_serialized);
+    try std.testing.expect(std.mem.find(u8, camel_serialized, "\"first_name\":\"Alice\"") != null);
+    try std.testing.expect(std.mem.find(u8, camel_serialized, "\"last_name\":\"Smith\"") != null);
+}
+
+test "fromJson - DefaultFactory dynamically generated values" {
+    const allocator = std.testing.allocator;
+
+    const dummy_factory = struct {
+        var call_counter: i32 = 0;
+        fn nextId() i32 {
+            call_counter += 1;
+            return call_counter;
+        }
+    };
+
+    const Device = struct {
+        name: []const u8,
+        id: types.DefaultFactory(i32, dummy_factory.nextId),
+    };
+
+    // When ID is missing, it should call the factory function
+    const json_str = "{\"name\":\"Sensor A\"}";
+    var result1 = try fromJson(Device, json_str, allocator);
+    defer result1.deinit();
+
+    try std.testing.expect(result1.isValid());
+    try std.testing.expectEqual(@as(i32, 1), result1.value.?.id.get());
+
+    var result2 = try fromJson(Device, json_str, allocator);
+    defer result2.deinit();
+
+    try std.testing.expect(result2.isValid());
+    try std.testing.expectEqual(@as(i32, 2), result2.value.?.id.get());
+
+    // When ID is provided, it should use the provided value instead
+    const json_with_id = "{\"name\":\"Sensor B\",\"id\":99}";
+    var result3 = try fromJson(Device, json_with_id, allocator);
+    defer result3.deinit();
+
+    try std.testing.expect(result3.isValid());
+    try std.testing.expectEqual(@as(i32, 99), result3.value.?.id.get());
+}
+
+test "fromQueryString - DefaultFactory" {
+    const allocator = std.testing.allocator;
+
+    const static_factory = struct {
+        fn getVal() i32 {
+            return 42;
+        }
+    };
+
+    const ConfigItem = struct {
+        key: []const u8,
+        val: types.DefaultFactory(i32, static_factory.getVal),
+    };
+
+    const qs = "key=port";
+    var result = try fromQueryString(ConfigItem, qs, allocator);
+    defer result.deinit();
+
+    try std.testing.expect(result.isValid());
+    try std.testing.expectEqualStrings("port", result.value.?.key);
+    try std.testing.expectEqual(@as(i32, 42), result.value.?.val.get());
+}
+
+test "fromJson and fromQueryString - field-level and model-level validators" {
+    const allocator = std.testing.allocator;
+
+    const TestModel = struct {
+        email: types.Email,
+        age: i32,
+        secret_code: []const u8,
+
+        pub fn validate_age(val: i32) !i32 {
+            if (val < 18) return error.AgeTooYoung;
+            // Let's cap the age at 100 as a modification
+            if (val > 100) return 100;
+            return val;
+        }
+
+        pub fn validate_secret_code(val: []const u8) ![]const u8 {
+            if (std.mem.eql(u8, val, "admin")) return error.ForbiddenCode;
+            return val;
+        }
+
+        pub fn validateModel(self: *const @This()) !void {
+            if (std.mem.eql(u8, self.email.get(), "forbidden@example.com") and self.age == 100) {
+                return error.ForbiddenCombination;
+            }
+        }
+    };
+
+    // 1. JSON parsing success (including field validator capping age to 100)
+    const valid_json = "{\"email\":\"user@example.com\",\"age\":150,\"secret_code\":\"pass123\"}";
+    var result1 = try fromJson(TestModel, valid_json, allocator);
+    defer result1.deinit();
+
+    try std.testing.expect(result1.isValid());
+    const model1 = result1.value.?;
+    try std.testing.expectEqualStrings("user@example.com", model1.email.get());
+    try std.testing.expectEqual(@as(i32, 100), model1.age); // capped by validator
+    try std.testing.expectEqualStrings("pass123", model1.secret_code);
+
+    // 2. JSON parsing field failure (age too young)
+    const young_json = "{\"email\":\"user@example.com\",\"age\":12,\"secret_code\":\"pass123\"}";
+    var result2 = try fromJson(TestModel, young_json, allocator);
+    defer result2.deinit();
+
+    try std.testing.expect(!result2.isValid());
+    try std.testing.expect(std.mem.find(u8, result2.error_list.errors.items[0].message, "AgeTooYoung") != null);
+
+    // 3. JSON parsing field failure (forbidden code)
+    const admin_json = "{\"email\":\"user@example.com\",\"age\":30,\"secret_code\":\"admin\"}";
+    var result3 = try fromJson(TestModel, admin_json, allocator);
+    defer result3.deinit();
+
+    try std.testing.expect(!result3.isValid());
+    try std.testing.expect(std.mem.find(u8, result3.error_list.errors.items[0].message, "ForbiddenCode") != null);
+
+    // 4. JSON parsing model failure (forbidden combination)
+    const forbidden_json = "{\"email\":\"forbidden@example.com\",\"age\":120,\"secret_code\":\"pass123\"}";
+    var result4 = try fromJson(TestModel, forbidden_json, allocator);
+    defer result4.deinit();
+
+    try std.testing.expect(!result4.isValid());
+    try std.testing.expect(std.mem.find(u8, result4.error_list.errors.items[0].message, "ForbiddenCombination") != null);
+
+    // 5. URL Query parameter success and validation
+    const valid_qs = "email=user@example.com&age=45&secret_code=hello";
+    var result5 = try fromQueryString(TestModel, valid_qs, allocator);
+    defer result5.deinit();
+
+    try std.testing.expect(result5.isValid());
+    try std.testing.expectEqual(@as(i32, 45), result5.value.?.age);
+
+    // 6. URL Query parameter field failure
+    const young_qs = "email=user@example.com&age=15&secret_code=hello";
+    var result6 = try fromQueryString(TestModel, young_qs, allocator);
+    defer result6.deinit();
+
+    try std.testing.expect(!result6.isValid());
+    try std.testing.expect(std.mem.find(u8, result6.error_list.errors.items[0].message, "AgeTooYoung") != null);
 }

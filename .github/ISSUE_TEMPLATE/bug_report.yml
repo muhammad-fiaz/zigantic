@@ -21,7 +21,7 @@ body:
     attributes:
       label: Zigantic Version
       description: What version of zigantic are you using?
-      placeholder: "e.g., 0.0.1"
+      placeholder: "e.g., 0.0.3"
     validations:
       required: true
 
@@ -30,7 +30,7 @@ body:
     attributes:
       label: Zig Version
       description: What version of Zig are you using? (run `zig version`)
-      placeholder: "e.g., 0.15.0"
+      placeholder: "e.g., 0.16.0"
     validations:
       required: true
 

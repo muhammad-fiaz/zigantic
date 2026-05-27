@@ -63,31 +63,12 @@ This will output results to the console and generate a `benchmark-results.md` fi
 | List([]const u8,1,10) | ~5M+ | <200ns |
 | FixedList(i32,3) | ~8M+ | <125ns |
 
-## Comparison with Other Libraries
-
-### vs. Python Pydantic
-
-| Operation | zigantic | Pydantic v2 |
-|-----------|----------|-------------|
-| Simple validation | <200ns | ~1-5μs |
-| JSON parsing | <20μs | ~50-100μs |
-| Memory overhead | Zero | Dynamic allocation |
-| Compile-time checks | Yes | No |
-
-### vs. Other Zig Libraries
-
-zigantic provides a unique combination of:
-- **Compile-time validation** - Errors caught at build time
-- **Rich type system** - 40+ built-in types
-- **Zero runtime overhead** - No dynamic dispatch
-- **Human-readable errors** - Developer-friendly messages
-
 ## Benchmark Environment
 
 Benchmarks are run on GitHub Actions runners:
 - **Platform:** Linux (ubuntu-latest)
 - **Architecture:** x86_64
-- **Zig Version:** 0.15.2
+- **Zig Version:** 0.16.0
 - **Optimization:** ReleaseFast
 
 ## Understanding Results
@@ -116,7 +97,7 @@ const Name = z.String(1, 50);
 
 ```zig
 // ✅ Good: Reuse allocator for multiple operations
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa = std.heap.DebugAllocator(.{}).init;
 const allocator = gpa.allocator();
 
 for (items) |item| {

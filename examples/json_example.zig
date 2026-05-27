@@ -7,7 +7,7 @@ pub fn main() !void {
     // Disable update check to prevent background thread memory leaks in examples
     z.disableUpdateCheck();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

@@ -2,6 +2,23 @@
 
 Complete API reference for all zigantic types.
 
+## Custom Messages
+
+Most parameterized types accept an `f` suffix variant with a comptime `messages` parameter to override error messages:
+
+```zig
+const Name = Stringf(1, 50, .{ .too_short = "name is required" });
+const Age = Intf(i32, 18, 120, .{ .too_small = "must be 18 or older" });
+const Pwd = StrongPasswordf(8, 100, .{ .weak_password = "needs upper, lower, digit" });
+
+// Get custom message for an error
+const msg = Name.messageFor(err); // ?[]const u8
+```
+
+The base types (`String`, `Int`, etc.) use built-in default messages. Use the `f` variants when you need custom messages.
+
+Available on: `String`, `NonEmptyString`, `Trimmed`, `Lowercase`, `Uppercase`, `Alphanumeric`, `AsciiString`, `Secret`, `StrongPassword`, `Int`, `UInt`, `PositiveInt`, `NonNegativeInt`, `NegativeInt`, `EvenInt`, `OddInt`, `MultipleOf`, `Float`, `Percentage`, `Probability`, `PositiveFloat`, `NegativeFloat`, `FiniteFloat`, `List`, `NonEmptyList`, `FixedList`, `HexString`, `HexColor`, `MacAddress`, `IsoDateTime`, `IsoDate`, `CountryCode`, `CurrencyCode`, `Latitude`, `Longitude`, `Port`.
+
 ## String Types
 
 | Type                       | Description                        |
@@ -103,6 +120,16 @@ f.trunc()      // Truncate
 | `Latitude`              | -90 to 90 coordinate      |
 | `Longitude`             | -180 to 180 coordinate    |
 | `Port`                  | Network port 1-65535      |
+| `Iban`                  | International Bank Account |
+| `Base58`                | Base58 (crypto addresses) |
+| `HslColor`              | HSL color string          |
+| `Duration`              | ISO 8601 duration         |
+| `CronExpression`        | Cron schedule expression  |
+| `Isbn10`                | ISBN-10 with checksum     |
+| `Isbn13`                | ISBN-13 with checksum     |
+| `AsciiAlphaString(min, max)` | ASCII letters only  |
+| `AsciiPrintableString(min, max)` | ASCII printable |
+| `StrongPasswordStrict`  | Built-in strong password  |
 
 ### Format Methods
 
@@ -111,11 +138,22 @@ f.trunc()      // Truncate
 email.domain()          // Domain part
 email.localPart()       // Local part
 email.isBusinessEmail() // Not free email
+email.isFreeEmail()     // Free email provider
+email.hasTag()          // Has +tag
+email.tag()             // Tag portion or null
+email.tld()             // Top-level domain
 
 // Url
 url.isHttps()   // HTTPS check
 url.protocol()  // "http" or "https"
 url.host()      // Host part
+url.path()      // Path portion
+url.query()     // Query string or null
+url.fragment()  // Fragment or null
+url.port()      // Port number or null
+url.hasQuery()  // Has query string
+url.hasFragment() // Has fragment
+url.filename()  // Last path segment
 
 // Uuid
 uuid.version()  // Version number
@@ -163,6 +201,23 @@ lng.isWestern()   // < 0
 port.isPrivileged() // < 1024
 port.isRegistered() // 1024-49151
 port.isDynamic()    // > 49151
+
+// Iban
+iban.countryCode()      // 2-letter prefix
+iban.normalizedLength() // Length without spaces
+
+// Base58
+b58.len() // Length
+
+// Duration
+dur.hasTime() // Has time component
+
+// CronExpression
+cron.fieldCount() // 5 or 6
+
+// StrongPasswordStrict
+pwd.masked() // "********"
+pwd.len()    // Length
 ```
 
 ## Collection Types
@@ -176,28 +231,35 @@ port.isDynamic()    // > 49151
 ### Collection Methods
 
 ```zig
-list.get()     // Get items
-list.len()     // Length
-list.isEmpty() // Empty check
-list.first()   // First or null
-list.last()    // Last or null
-list.at(i)     // At index or null
+list.get()      // Get items
+list.len()      // Length
+list.isEmpty()  // Empty check
+list.first()    // First or null
+list.last()     // Last or null
+list.at(i)      // At index or null
+list.contains(x) // Contains item
+list.slice(s,e) // Sub-slice
+list.sum()      // Sum of items
+list.all(fn)    // All match predicate
+list.any(fn)    // Any match predicate
+list.findIndex(fn) // Index of first match
 ```
 
 ## Special Types
 
-| Type                   | Description         |
-| ---------------------- | ------------------- |
-| `Default(T, value)`    | Default value       |
-| `Custom(T, fn)`        | Custom validator    |
-| `Transform(T, fn)`     | Transform value     |
-| `Coerce(From, To)`     | Type conversion     |
-| `Literal(T, value)`    | Exact match         |
-| `Partial(T)`           | All fields optional |
-| `OneOf(T, values)`     | Allowed values      |
-| `Range(T, s, e, step)` | Range with step     |
-| `Nullable(T)`          | Explicit null       |
-| `Lazy(T)`              | Lazy evaluation     |
+| Type                      | Description         |
+| ------------------------- | ------------------- |
+| `Default(T, value)`       | Default value       |
+| `DefaultFactory(T, fn)`   | Dynamic default     |
+| `Custom(T, fn)`           | Custom validator    |
+| `Transform(T, fn)`        | Transform value     |
+| `Coerce(From, To)`        | Type conversion     |
+| `Literal(T, value)`       | Exact match         |
+| `Partial(T)`              | All fields optional |
+| `OneOf(T, values)`        | Allowed values      |
+| `Range(T, s, e, step)`    | Range with step     |
+| `Nullable(T)`             | Explicit null       |
+| `Lazy(T)`                 | Lazy evaluation     |
 
 ### Special Methods
 
@@ -205,6 +267,10 @@ list.at(i)     // At index or null
 // Default
 d.isDefault()        // Is default value
 D.getOrDefault(opt)  // Get or default
+
+// DefaultFactory
+df.initDefault()     // Initialize with dynamic factory function
+DF.getOrDefault(opt) // Get or default from factory
 
 // OneOf
 o.isFirst()  // First value
@@ -217,3 +283,4 @@ n.unwrapOr(d)   // Get or default
 // Transform
 t.getOriginal() // Original value
 ```
+

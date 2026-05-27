@@ -34,3 +34,6 @@ Desktop.ini
 # Logs
 *.log
 benchmark-results.md
+
+zig-pkg
+.global-cache/

@@ -4,14 +4,14 @@ This guide covers all the ways to install zigantic in your Zig project.
 
 ## Requirements
 
-- **Zig 0.15.0** or later
+- **Zig 0.16.0** or later
 
 ## Release Installation (Recommended)
 
-Install the latest stable release (v0.0.2):
+Install the latest stable release for zig 0.16+ (use v0.0.3 or newer):
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/v0.0.2.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.3.tar.gz
 ```
 
 This downloads the package and adds it to your `build.zig.zon`.
@@ -83,7 +83,7 @@ You should see:
 
 ```
 Installed successfully! Email domain: example.com
-zigantic version: 0.0.2
+zigantic version: 0.0.3
 ```
 
 ## Using Prebuilt Libraries
@@ -140,7 +140,7 @@ If you get an error about the package not being found:
 
 If you encounter build errors:
 
-1. Ensure you're using Zig 0.15.0 or later: `zig version`
+1. Ensure you're using Zig 0.16.0 or later: `zig version`
 2. Try deleting `.zig-cache` and rebuilding
 3. Check the [issues page](https://github.com/muhammad-fiaz/zigantic/issues) for known problems
 

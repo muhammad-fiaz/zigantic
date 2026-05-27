@@ -9,7 +9,7 @@ zigantic **automatically** checks for updates in the background when you first u
 When a new version is available, you'll see a log message:
 
 ```
-info: [UPDATE] A newer release of zigantic is available: v0.1.0 (current 0.0.1)
+info: [UPDATE] A newer release of zigantic is available: v0.0.4 (current 0.0.3)
 ```
 
 ### Basic Usage (Updates Enabled by Default)
@@ -19,7 +19,7 @@ const std = @import("std");
 const z = @import("zigantic");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
 
     // Just use the library - update check happens automatically!
@@ -83,8 +83,8 @@ Get the current version of zigantic:
 ```zig
 const z = @import("zigantic");
 
-const ver = z.getVersion();       // "0.0.1"
-const full = z.getVersionString(); // "v0.0.1"
+const ver = z.getVersion();       // "0.0.3"
+const full = z.getVersionString(); // "v0.0.3"
 ```
 
 ## Manual Update Checking
@@ -97,7 +97,7 @@ You can also check for updates manually:
 const z = @import("zigantic");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
 
     // Start background update check
@@ -114,7 +114,7 @@ pub fn main() !void {
 const z = @import("zigantic");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
 
     // Check for updates synchronously
@@ -197,8 +197,8 @@ const url = z.ISSUES_URL;  // "https://github.com/muhammad-fiaz/zigantic/issues"
 | `disableUpdateCheck()`             | Disable automatic update checking                       |
 | `setConfig(config)`                | Set custom configuration                                |
 | `getConfig()`                      | Get current configuration                               |
-| `getVersion()`                     | Get version string (e.g., "0.0.1")                      |
-| `getVersionString()`               | Get full version (e.g., "v0.0.1")                       |
+| `getVersion()`                     | Get version string (e.g., "0.0.3")                      |
+| `getVersionString()`               | Get full version (e.g., "v0.0.3")                       |
 | `checkForUpdates(allocator)`       | Manually check for updates in background                |
 | `checkForUpdatesSync(allocator)`   | Manually check for updates synchronously                |
 | `reportInternalError(msg)`         | Report internal library bug (not for validation errors) |

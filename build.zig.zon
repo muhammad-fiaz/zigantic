@@ -1,8 +1,8 @@
 .{
     .name = .zigantic,
-    .version = "0.0.2",
+    .version = "0.0.3",
     .fingerprint = 0x1fba9aa888c5185b,
-    .minimum_zig_version = "0.15.0",
+    .minimum_zig_version = "0.16.0",
     .paths = .{
         "src",
         "build.zig",

@@ -304,3 +304,158 @@ const json =
 ;
 ```
 
+---
+
+## URL Query String & Form URL-Encoded Parsing
+
+### z.fromQueryString
+
+Parse form-urlencoded parameter payload or URL query string into a validated struct. Characters like `+` are automatically decoded to spaces, and percent encodings (`%XX`) are resolved in place with high efficiency.
+
+```zig
+pub fn fromQueryString(
+    comptime T: type,
+    query_string: []const u8,
+    allocator: std.mem.Allocator
+) !ParseResult(T)
+```
+
+### z.toQueryString
+
+Serialize a struct instance into a form-urlencoded parameters string:
+
+```zig
+pub fn toQueryString(
+    value: anytype,
+    allocator: std.mem.Allocator
+) ![]const u8
+```
+
+**Example:**
+
+```zig
+const Search = struct {
+    query: z.String(1, 50),
+    page: z.Default(u32, 1),
+    active: bool,
+};
+
+const qs = "query=Mechanical+Keyboard&page=2&active=true";
+var result = try z.fromQueryString(Search, qs, allocator);
+defer result.deinit();
+
+if (result.isValid()) {
+    const s = result.value.?;
+    // s.query.get() == "Mechanical Keyboard"
+    // s.page.get() == 2
+    // s.active == true
+}
+```
+
+---
+
+## Compile-Time Field Aliases & Naming Policies
+
+Map custom aliases or use automatic naming policies completely at compile time with zero runtime cost.
+
+### Automatic Naming Policies
+
+Use `pub const zigantic_naming` to map `camelCase` struct fields to common formatting styles like `snake_case` or `kebab-case` when serializing and deserializing.
+
+```zig
+const User = struct {
+    firstName: []const u8,
+    lastName: []const u8,
+
+    // Maps firstName -> first_name, lastName -> last_name automatically
+    pub const zigantic_naming = z.utils.NamingPolicy.snake_case;
+};
+```
+
+### Explicit Field Aliases
+
+Use `pub const zigantic_aliases` to specify exact custom key mappings for individual fields. This takes precedence over automatic naming policies.
+
+```zig
+const Product = struct {
+    productName: []const u8,
+    priceInUsd: f64,
+
+    pub const zigantic_aliases = .{
+        .productName = "name",
+        .priceInUsd = "price",
+    };
+};
+```
+
+---
+
+## Advanced Features
+
+zigantic includes advanced, high-value validation decorators and dynamic factories.
+
+### Dynamic Default Factories (`DefaultFactory`)
+
+While `Default` is used for compile-time constant default values, `DefaultFactory` is used to dynamically generate default values at parsing/deserialization time (e.g. timestamps, UUIDs, or counter-based IDs).
+
+```zig
+const std = @import("std");
+const z = @import("zigantic");
+
+var call_counter: i32 = 0;
+fn nextId() i32 {
+    call_counter += 1;
+    return call_counter;
+}
+
+const Device = struct {
+    name: []const u8,
+    id: z.DefaultFactory(i32, nextId),
+};
+
+// If "id" is missing in JSON, nextId() is automatically called to supply the value.
+```
+
+### Field-Level Validators (`validate_[field_name]`)
+
+Structs can define field-level validator functions that run automatically when parsing a field from JSON or URL Query maps. A field-level validator:
+- Must have the name `validate_[field_name]` (e.g. `validate_age`).
+- Receives the parsed field value.
+- Returns either a validated/modified value or a Zig validation error.
+
+```zig
+const User = struct {
+    username: z.String(3, 50),
+    age: i32,
+
+    pub fn validate_age(val: i32) !i32 {
+        if (val < 18) return error.AgeTooYoung;
+        // Normalizes age to a maximum of 100
+        if (val > 100) return 100;
+        return val;
+    }
+};
+```
+
+### Model-Level Validation (`validateModel`)
+
+Structs can define a model-level validator function that runs automatically after all struct fields have been parsed and individually validated. It is extremely useful for verifying cross-field constraints (e.g. checking if password fields match or if a date range is valid).
+
+- Must have the name `validateModel`.
+- Can accept a pointer receiver (`self: *const @This()`) or a value receiver (`self: @This()`).
+- Returns either `void` or a Zig validation error.
+
+```zig
+const DateRange = struct {
+    start_date: z.IsoDate,
+    end_date: z.IsoDate,
+
+    pub fn validateModel(self: *const @This()) !void {
+        // Run cross-field checks
+        // (Ensure start_date is before end_date)
+    }
+};
+```
+
+
+

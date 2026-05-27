@@ -55,6 +55,16 @@ const pwd = try z.StrongPassword(8, 100).init("S3cur3P@ss!");
 // z.StrongPassword(8, 100).init("password") -> WeakPassword error
 ```
 
+### z.StrongPasswordStrict
+
+Built-in strong password (min 8 chars, upper+lower+digit+special). No parameters needed.
+
+```zig
+const pwd = try z.StrongPasswordStrict.init("P@ssw0rd!");
+pwd.masked() // "********"
+pwd.len()    // 9
+```
+
 ### Other String Types
 
 | Type                     | Description                   |
@@ -64,6 +74,8 @@ const pwd = try z.StrongPassword(8, 100).init("S3cur3P@ss!");
 | `Uppercase(max)`         | Must be all uppercase         |
 | `Alphanumeric(min, max)` | Letters and digits only       |
 | `AsciiString(min, max)`  | ASCII characters only (0-127) |
+| `AsciiAlphaString(min, max)` | ASCII letters only (A-Z, a-z) |
+| `AsciiPrintableString(min, max)` | ASCII printable (0x20-0x7E) |
 
 ## Number Types
 
@@ -167,6 +179,24 @@ card.masked()   // last 4 digits
 | `Semver`         | Semantic version              |
 | `PhoneNumber`    | Phone with `hasCountryCode()` |
 | `Regex(pattern)` | Pattern matching              |
+| `Base64`         | Base64-encoded string         |
+| `Base58`         | Base58 (crypto addresses)     |
+| `HexString`      | Hexadecimal string            |
+| `HexColor`       | Hex color code                |
+| `HslColor`       | HSL color string              |
+| `MacAddress`     | MAC address                   |
+| `IsoDateTime`    | ISO 8601 datetime             |
+| `IsoDate`        | ISO 8601 date                 |
+| `Duration`       | ISO 8601 duration             |
+| `CronExpression` | Cron schedule                 |
+| `Iban`           | International Bank Account    |
+| `Isbn10`         | ISBN-10 with checksum         |
+| `Isbn13`         | ISBN-13 with checksum         |
+| `CountryCode`    | ISO country code              |
+| `CurrencyCode`   | ISO currency code             |
+| `Latitude`       | Latitude coordinate           |
+| `Longitude`      | Longitude coordinate          |
+| `Port`           | TCP/UDP port number           |
 
 ## Collection Types
 
@@ -176,11 +206,17 @@ List with length constraints.
 
 ```zig
 const list = try z.List(u32, 1, 10).init(&items);
-list.len()     // item count
-list.isEmpty() // false
-list.first()   // first item or null
-list.last()    // last item or null
-list.at(1)     // item at index or null
+list.len()        // item count
+list.isEmpty()    // false
+list.first()      // first item or null
+list.last()       // last item or null
+list.at(1)        // item at index or null
+list.contains(5)  // true if contains 5
+list.slice(0, 3)  // sub-slice
+list.sum()        // sum of all items
+list.all(fn)      // all match predicate
+list.any(fn)      // any match predicate
+list.findIndex(fn) // index of first match
 ```
 
 ### z.FixedList(T, exact_len)
