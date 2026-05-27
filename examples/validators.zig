@@ -30,6 +30,18 @@ pub fn main() !void {
     std.debug.print("256.1.1.1: {}\n", .{v.isIpv4("256.1.1.1")});
     std.debug.print("2001:0db8:85a3:0000:0000:8a2e:0370:7334: {}\n", .{v.isIpv6("2001:0db8:85a3:0000:0000:8a2e:0370:7334")});
 
+    // Richer built-in format validators
+    std.debug.print("\n--- Extra Formats ---\n", .{});
+    std.debug.print("#ff5733: {}\n", .{v.isHexColor("#ff5733")});
+    std.debug.print("00:1A:2B:3C:4D:5E: {}\n", .{v.isMacAddress("00:1A:2B:3C:4D:5E")});
+    std.debug.print("2024-01-15: {}\n", .{v.isIsoDate("2024-01-15")});
+    std.debug.print("2024-01-15T10:30:00Z: {}\n", .{v.isIsoDateTime("2024-01-15T10:30:00Z")});
+    std.debug.print("US: {}\n", .{v.isCountryCode("US")});
+    std.debug.print("USD: {}\n", .{v.isCurrencyCode("USD")});
+    std.debug.print("Latitude 45.0: {}\n", .{v.isLatitude(45.0)});
+    std.debug.print("Longitude -75.0: {}\n", .{v.isLongitude(-75.0)});
+    std.debug.print("Port 443: {}\n", .{v.isPort(443)});
+
     // Slug validation
     std.debug.print("\n--- Slug ---\n", .{});
     std.debug.print("hello-world: {}\n", .{v.isSlug("hello-world")});

@@ -7,7 +7,8 @@ const builtin = @import("builtin");
 const http = std.http;
 const SemanticVersion = std.SemanticVersion;
 const version_info = @import("version.zig");
-const Network = @import("utils/network.zig");
+const utils = @import("utils.zig");
+const Network = @import("network.zig");
 
 /// URL for reporting issues on GitHub.
 pub const ISSUES_URL = "https://github.com/muhammad-fiaz/zigantic/issues";
@@ -20,10 +21,6 @@ const REPO_NAME = "zigantic";
 
 /// Current version of the library.
 const CURRENT_VERSION: []const u8 = version_info.version;
-
-// ============================================================================
-// ERROR REPORTING (for library bugs only, NOT validation errors)
-// ============================================================================
 
 /// Reports a library bug/runtime error with instructions for filing a bug report.
 /// Use this ONLY for unexpected errors that indicate a bug in zigantic itself.
@@ -52,18 +49,10 @@ pub const reportErrorMessage = reportInternalError;
 
 /// Static flag to ensure update check runs only once per process.
 var update_check_done = false;
-var update_check_mutex = std.Thread.Mutex{};
+var update_check_mutex: std.atomic.Mutex = .unlocked;
 
-/// Strips the 'v' or 'V' prefix from a version tag.
-fn stripVersionPrefix(tag: []const u8) []const u8 {
-    if (tag.len == 0) return tag;
-    return if (tag[0] == 'v' or tag[0] == 'V') tag[1..] else tag;
-}
-
-/// Attempts to parse a semantic version string.
-fn parseSemver(text: []const u8) ?SemanticVersion {
-    return SemanticVersion.parse(text) catch null;
-}
+const stripVersionPrefix = utils.stripVersionPrefix;
+const parseSemver = utils.parseSemver;
 
 /// Represents the relationship between local and remote versions.
 const VersionRelation = enum {
@@ -92,13 +81,13 @@ fn compareVersions(latest_raw: []const u8) VersionRelation {
 }
 
 /// Fetches the latest release tag from GitHub.
-fn fetchLatestTag(allocator: std.mem.Allocator) ![]const u8 {
+fn fetchLatestTag(allocator: std.mem.Allocator, io: std.Io) ![]const u8 {
     const url = std.fmt.comptimePrint("https://api.github.com/repos/{s}/{s}/releases/latest", .{ REPO_OWNER, REPO_NAME });
     const extra_headers = [_]http.Header{
         .{ .name = "Accept", .value = "application/vnd.github+json" },
     };
 
-    var parsed = Network.fetchJson(allocator, url, &extra_headers) catch return error.TagMissing;
+    var parsed = Network.fetchJson(allocator, url, &extra_headers, io) catch return error.TagMissing;
     defer parsed.deinit();
 
     return switch (parsed.value) {
@@ -119,7 +108,9 @@ fn fetchLatestTag(allocator: std.mem.Allocator) ![]const u8 {
 /// Returns a thread handle so callers can optionally join during shutdown.
 /// Fails silently on errors (no internet, API limits, etc).
 pub fn checkForUpdates(allocator: std.mem.Allocator) ?std.Thread {
-    update_check_mutex.lock();
+    while (!update_check_mutex.tryLock()) {
+        std.atomic.spinLoopHint();
+    }
     defer update_check_mutex.unlock();
 
     // Prevent multiple concurrent update checks
@@ -131,7 +122,9 @@ pub fn checkForUpdates(allocator: std.mem.Allocator) ?std.Thread {
 
 /// Worker function that performs the actual update check.
 fn checkWorker(allocator: std.mem.Allocator) void {
-    const latest_tag = fetchLatestTag(allocator) catch return;
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+    const latest_tag = fetchLatestTag(allocator, io) catch return;
     defer allocator.free(latest_tag);
 
     // Use ASCII-safe indicators instead of emoji for cross-platform compatibility
@@ -158,7 +151,9 @@ pub const UpdateInfo = struct {
 /// Synchronously checks for updates and returns update information.
 /// This is useful for applications that want to handle the update notification themselves.
 pub fn checkForUpdatesSync(allocator: std.mem.Allocator) !UpdateInfo {
-    const latest_tag = try fetchLatestTag(allocator);
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+    const latest_tag = try fetchLatestTag(allocator, io);
     errdefer allocator.free(latest_tag);
 
     const relation = compareVersions(latest_tag);

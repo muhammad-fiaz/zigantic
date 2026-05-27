@@ -21,6 +21,10 @@ pub fn build(b: *std.Build) void {
         .{ .name = "validators", .path = "examples/validators.zig" },
         .{ .name = "json_example", .path = "examples/json_example.zig" },
         .{ .name = "error_handling", .path = "examples/error_handling.zig" },
+        .{ .name = "naming_conventions", .path = "examples/naming_conventions.zig" },
+        .{ .name = "custom_messages", .path = "examples/custom_messages.zig" },
+        .{ .name = "callbacks", .path = "examples/callbacks.zig" },
+        .{ .name = "extended_types", .path = "examples/extended_types.zig" },
     };
 
     // Create run-all-examples step

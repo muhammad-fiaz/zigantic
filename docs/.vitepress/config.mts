@@ -4,7 +4,7 @@ import llmstxt from "vitepress-plugin-llms";
 // Site configuration
 export const SITE_URL = "https://muhammad-fiaz.github.io/zigantic";
 export const SITE_NAME = "zigantic";
-export const SITE_DESCRIPTION = "Pydantic-like data validation and JSON serialization for Zig. 40+ validation types, compile-time driven, zero runtime overhead.";
+export const SITE_DESCRIPTION = "Type-safe data validation and JSON serialization for Zig. 60+ validation types, compile-time driven, zero runtime overhead.";
 
 // Google Analytics and Google Tag Manager IDs
 export const GA_ID = "G-6BVYCRK57P";
@@ -13,7 +13,7 @@ export const GTM_ID = "GTM-P4M9T8ZR";
 // Google AdSense Client ID
 export const ADSENSE_CLIENT_ID = "ca-pub-2040560600290490";
 // SEO Keywords
-export const KEYWORDS = "zig, zigantic, pydantic, validation, json, serialization, types, compile-time, data validation, type-safe, email validation, url validation, uuid, ipv4, ipv6";
+export const KEYWORDS = "zig, zigantic, validation, json, serialization, types, compile-time, data validation, type-safe, email validation, url validation, uuid, ipv4, ipv6, iban, isbn, base58";
 
 export default defineConfig({
   lang: "en-US",
@@ -52,7 +52,7 @@ export default defineConfig({
     ["meta", { property: "og:image", content: `${SITE_URL}/cover.png` }],
     ["meta", { property: "og:image:width", content: "1200" }],
     ["meta", { property: "og:image:height", content: "630" }],
-    ["meta", { property: "og:image:alt", content: "zigantic - Pydantic-like validation for Zig" }],
+    ["meta", { property: "og:image:alt", content: "zigantic - Type-safe validation for Zig" }],
     ["meta", { property: "og:site_name", content: SITE_NAME }],
     ["meta", { property: "og:locale", content: "en_US" }],
 
@@ -207,7 +207,7 @@ gtag('config', '${GA_ID}');`,
           priceCurrency: "USD",
         },
         downloadUrl: "https://github.com/muhammad-fiaz/zigantic",
-        softwareVersion: "0.0.2",
+        softwareVersion: "0.0.3",
         license: "https://opensource.org/licenses/MIT",
       });
     } else {
@@ -284,7 +284,7 @@ gtag('config', '${GA_ID}');`,
       { text: "Guide", link: "/guide/getting-started" },
       { text: "API", link: "/api/types" },
       {
-        text: "v0.0.2",
+        text: "v0.0.3",
         items: [
           { text: "Changelog", link: "https://github.com/muhammad-fiaz/zigantic/releases" },
           { text: "Contributing", link: "https://github.com/muhammad-fiaz/zigantic/blob/main/CONTRIBUTING.md" },

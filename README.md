@@ -2,7 +2,7 @@
 <img alt="logo" src="https://github.com/user-attachments/assets/90082000-30ab-4ca6-992d-247d1b1e706b" />
 
 <a href="https://muhammad-fiaz.github.io/zigantic/"><img src="https://img.shields.io/badge/docs-muhammad--fiaz.github.io-blue" alt="Documentation"></a>
-<a href="https://ziglang.org/"><img src="https://img.shields.io/badge/Zig-0.15.0+-orange.svg?logo=zig" alt="Zig Version"></a>
+<a href="https://ziglang.org/"><img src="https://img.shields.io/badge/Zig-0.16.0+-orange.svg?logo=zig" alt="Zig Version"></a>
 <a href="https://github.com/muhammad-fiaz/zigantic"><img src="https://img.shields.io/github/stars/muhammad-fiaz/zigantic" alt="GitHub stars"></a>
 <a href="https://github.com/muhammad-fiaz/zigantic/issues"><img src="https://img.shields.io/github/issues/muhammad-fiaz/zigantic" alt="GitHub issues"></a>
 <a href="https://github.com/muhammad-fiaz/zigantic/pulls"><img src="https://img.shields.io/github/issues-pr/muhammad-fiaz/zigantic" alt="GitHub pull requests"></a>
@@ -15,7 +15,7 @@
 <a href="https://github.com/sponsors/muhammad-fiaz"><img src="https://img.shields.io/badge/Sponsor-💖-pink?style=social&logo=github" alt="GitHub Sponsors"></a>
 <a href="https://hits.sh/github.com/muhammad-fiaz/zigantic/"><img src="https://hits.sh/github.com/muhammad-fiaz/zigantic.svg?label=Visitors&extraCount=0&color=green" alt="Repo Visitors"></a>
 
-<p><em>Pydantic-like data validation and JSON serialization for Zig - bringing type-safe validation to the Zig ecosystem.</em></p>
+<p><em>Type-safe data validation and JSON serialization for Zig with compile-time guarantees.</em></p>
 
 <b> <a href="https://muhammad-fiaz.github.io/zigantic/">Documentation</a> |
 <a href="https://muhammad-fiaz.github.io/zigantic/api/types">API Reference</a> |
@@ -26,7 +26,7 @@
 
 ---
 
-zigantic brings Pydantic-style data validation to Zig, using the type system for compile-time guarantees. Define validation rules as types, parse JSON with automatic error handling, and serialize with zero runtime overhead for unused features.
+zigantic is a data validation library for Zig, using the type system for compile-time guarantees. Define validation rules as types, parse JSON with automatic error handling, and serialize with zero runtime overhead for unused features.
 
 ## Features
 
@@ -36,9 +36,12 @@ zigantic brings Pydantic-style data validation to Zig, using the type system for
 | **Idiomatic Zig**        | No macros, no DSLs, no magic. Just types and functions.             | [Getting Started](https://muhammad-fiaz.github.io/zigantic/guide/getting-started)         |
 | **Human-Readable Errors**| Field-aware messages with error codes (E001, E010, etc.)            | [Error Handling](https://muhammad-fiaz.github.io/zigantic/guide/error-handling)           |
 | **Zero Overhead**        | Unused features have zero runtime cost.                             | [Benchmarks](https://muhammad-fiaz.github.io/zigantic/guide/benchmarks)                   |
-| **50+ Built-in Types**   | Strings, numbers, formats, dates, geo, and collections.             | [Types API](https://muhammad-fiaz.github.io/zigantic/api/types)                           |
+| **60+ Built-in Types**   | Strings, numbers, formats, dates, geo, crypto, and collections.    | [Types API](https://muhammad-fiaz.github.io/zigantic/api/types)                           |
 | **JSON Serialization**   | Parse and serialize JSON with automatic validation.                 | [JSON API](https://muhammad-fiaz.github.io/zigantic/api/json)                             |
 | **Custom Validators**    | Define custom validation functions and transformations.             | [Validators](https://muhammad-fiaz.github.io/zigantic/api/validators)                     |
+| **Custom Messages**      | Override error messages per-type with comptime config.              | [Error Handling](https://muhammad-fiaz.github.io/zigantic/guide/error-handling)           |
+| **Lifecycle Callbacks**  | Hooks for validation and serialization lifecycle events.           | [Callbacks](https://muhammad-fiaz.github.io/zigantic/guide/error-handling)                |
+| **Color Overrides**      | Customize terminal colors per validation error type.              | [Error Handling](https://muhammad-fiaz.github.io/zigantic/guide/error-handling)           |
 | **Schemas**              | Define complex data structures with nested validation.              | [Schemas](https://muhammad-fiaz.github.io/zigantic/guide/schemas)                         |
 | **Auto Updates**         | Automatic version checking (can be disabled).                       | [Version & Updates](https://muhammad-fiaz.github.io/zigantic/guide/version-updates)       |
 
@@ -46,10 +49,10 @@ zigantic brings Pydantic-style data validation to Zig, using the type system for
 
 ### Release Installation (Recommended)
 
-Install the latest stable release (v0.0.2):
+Install the latest stable release for zig 0.16+ (use v0.0.3 or newer):
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/v0.0.2.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.3.tar.gz
 ```
 
 ### Nightly Installation
@@ -110,6 +113,16 @@ pub fn main() !void {
 
 > **Note:** zigantic automatically checks for updates when using JSON functions. To disable, call `z.disableUpdateCheck()` at the start of your program.
 
+Custom validation messages can be set per-type via the `f` suffix variants:
+
+```zig
+const Name = z.Stringf(3, 50, .{ .too_short = "name must be at least 3 chars" });
+const err = Name.init("Jo") catch |e| e;
+std.debug.print("{s}\n", .{Name.messageFor(err).?});
+```
+
+Or globally via the message formatter in Config:
+
 ### JSON Parsing with Validation
 
 ```zig
@@ -117,7 +130,7 @@ const std = @import("std");
 const z = @import("zigantic");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -153,6 +166,122 @@ pub fn main() !void {
         }
     }
 }
+```
+
+### URL Query Parameters & Form URL-Encoded Parsing
+
+```zig
+const std = @import("std");
+const z = @import("zigantic");
+
+pub fn main() !void {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const SearchQuery = struct {
+        query: z.String(1, 100),
+        page: z.Default(u32, 1),
+        active_only: bool,
+    };
+
+    const qs = "query=Mechanical+Keyboard&page=2&active_only=true";
+    var result = try z.fromQueryString(SearchQuery, qs, allocator);
+    defer result.deinit();
+
+    if (result.isValid()) {
+        const q = result.value.?;
+        std.debug.print("Query: {s}, Page: {d}\n", .{q.query.get(), q.page.get()});
+        
+        // Serialize back to query string!
+        const serialized = try z.toQueryString(q, allocator);
+        defer allocator.free(serialized);
+        std.debug.print("Serialized query string: {s}\n", .{serialized});
+    }
+}
+```
+
+### Compile-Time Field Aliases & Naming Policies
+
+Map custom aliases or use automatic naming policies (like `snake_case` or `camelCase`) completely at compile time with zero runtime cost.
+
+```zig
+const std = @import("std");
+const z = @import("zigantic");
+
+const User = struct {
+    firstName: []const u8,
+    lastName: []const u8,
+
+    // Automatically convert camelCase struct fields to snake_case in JSON/Query strings
+    pub const zigantic_naming = z.utils.NamingPolicy.snake_case;
+    
+    // Explicit field aliases (overrides naming policies)
+    pub const zigantic_aliases = .{
+        .firstName = "first",
+    };
+};
+```
+
+### Advanced Features
+
+zigantic supports high-value features including dynamic default factories, field-level validation, and model-level cross-field validation.
+
+#### Dynamic Default Factories (`DefaultFactory`)
+
+Use `DefaultFactory` when default values need to be dynamically generated at instantiation/parsing time (e.g. unique IDs or dynamic timestamps).
+
+```zig
+const std = @import("std");
+const z = @import("zigantic");
+
+var call_counter: i32 = 0;
+fn nextId() i32 {
+    call_counter += 1;
+    return call_counter;
+}
+
+const Device = struct {
+    name: []const u8,
+    id: z.DefaultFactory(i32, nextId),
+};
+```
+
+#### Field-Level Validators (`validate_[field_name]`)
+
+Structs can define field-level validator methods to run custom validation or coercion/normalization logic for specific fields. A field validator receives the parsed field value and returns the final value (or an error).
+
+```zig
+const User = struct {
+    username: z.String(3, 50),
+    age: i32,
+
+    // Runs after basic parsing succeeds for 'age'
+    pub fn validate_age(val: i32) !i32 {
+        if (val < 18) return error.AgeTooYoung;
+        // Cap age at 100 as a coercion/normalization
+        if (val > 100) return 100;
+        return val;
+    }
+};
+```
+
+#### Model-Level Validation (`validateModel`)
+
+Structs can define a `validateModel` method to perform cross-field validation after all individual fields have successfully parsed and validated.
+
+```zig
+const Order = struct {
+    item: []const u8,
+    quantity: i32,
+    discount_code: ?[]const u8,
+
+    pub fn validateModel(self: *const @This()) !void {
+        if (self.discount_code != null and self.quantity < 5) {
+            return error.DiscountRequiresMinimumQuantity;
+        }
+    }
+};
 ```
 
 ## All Types
@@ -254,20 +383,21 @@ f.trunc()        // Truncate
 | `NonEmptyList(T, max)` | Non-empty list   | Same as List                          |
 | `FixedList(T, len)`    | Exact size       | `at(i)`                               |
 
-### Special Types (10)
+### Special Types (11)
 
-| Type                   | Description         | Methods                         |
-| ---------------------- | ------------------- | ------------------------------- |
-| `Default(T, value)`    | Default value       | `isDefault()`, `getOrDefault()` |
-| `Custom(T, fn)`        | Custom validator    | -                               |
-| `Transform(T, fn)`     | Transform value     | `getOriginal()`                 |
-| `Coerce(From, To)`     | Type conversion     | -                               |
-| `Literal(T, value)`    | Exact value match   | -                               |
-| `Partial(T)`           | All fields optional | -                               |
-| `OneOf(T, values)`     | Allowed values      | `isFirst()`, `isLast()`         |
-| `Range(T, s, e, step)` | Range with step     | -                               |
-| `Nullable(T)`          | Explicit null       | `isNull()`, `unwrapOr()`        |
-| `Lazy(T)`              | Lazy evaluation     | `isComputed()`, `reset()`       |
+| Type                      | Description         | Methods                         |
+| ------------------------- | ------------------- | ------------------------------- |
+| `Default(T, value)`       | Default value       | `isDefault()`, `getOrDefault()` |
+| `DefaultFactory(T, fn)`   | Dynamic default     | `initDefault()`, `getOrDefault()`|
+| `Custom(T, fn)`           | Custom validator    | -                               |
+| `Transform(T, fn)`        | Transform value     | `getOriginal()`                 |
+| `Coerce(From, To)`        | Type conversion     | -                               |
+| `Literal(T, value)`       | Exact value match   | -                               |
+| `Partial(T)`              | All fields optional | -                               |
+| `OneOf(T, values)`        | Allowed values      | `isFirst()`, `isLast()`         |
+| `Range(T, s, e, step)`    | Range with step     | -                               |
+| `Nullable(T)`             | Explicit null       | `isNull()`, `unwrapOr()`        |
+| `Lazy(T)`                 | Lazy evaluation     | `isComputed()`, `reset()`       |
 
 ## Validators
 
@@ -322,6 +452,65 @@ const json = try errors.toJsonArray(allocator);
 // [{"field":"name","message":"too short","value":"Jo"}]
 ```
 
+### Custom Error Messages
+
+Override error messages per-type via the comptime `messages` parameter:
+
+```zig
+const Name = z.Stringf(3, 50, .{ .too_short = "name is required" });
+const Age = z.Intf(i32, 18, 120, .{ .too_small = "must be 18+" });
+const Pwd = z.StrongPasswordf(8, 100, .{
+    .too_short = "password too short",
+    .weak_password = "needs upper, lower, digit, special",
+});
+```
+
+The `messageFor(err)` method returns the custom message for the given error, or `null` if no override was set.
+
+For global message formatting (works with all types including Email, Url, etc.), use the config formatter:
+
+```zig
+var cfg = z.getConfig();
+cfg.validation_message_formatter = struct {
+    fn f(err: z.errors.ValidationError) []const u8 {
+        return switch (err) {
+            error.InvalidEmail => "please enter a valid email address",
+            else => z.errorMessage(err),
+        };
+    }
+}.f;
+z.setConfig(cfg);
+```
+
+### Lifecycle Callbacks
+
+Register callbacks for validation and serialization lifecycle events:
+
+```zig
+var cfg = z.getConfig();
+cfg.before_validation_callback = struct {
+    fn call(type_name: []const u8) void {
+        std.debug.print("Validating: {s}\n", .{type_name});
+    }
+}.call;
+cfg.on_field_validated_callback = struct {
+    fn call(field: []const u8, field_type: []const u8, success: bool) void { }
+}.call;
+cfg.on_field_error_callback = struct {
+    fn call(field: []const u8, msg: []const u8) void { }
+}.call;
+cfg.on_validation_complete_callback = struct {
+    fn call(valid: bool, error_count: usize) void { }
+}.call;
+cfg.before_serialize_callback = struct {
+    fn call() void { }
+}.call;
+cfg.after_serialize_callback = struct {
+    fn call(result: []const u8) void { }
+}.call;
+z.setConfig(cfg);
+```
+
 ### Error Codes
 
 | Code | Error                  | Message               |
@@ -338,21 +527,24 @@ const json = try errors.toJsonArray(allocator);
 
 ## Examples
 
-The library includes 5 comprehensive examples:
+The library includes 8 comprehensive examples:
 
 ```bash
-zig build run-basic           # Direct validation + JSON
-zig build run-advanced_types  # All 40+ types demo
-zig build run-validators      # Validator functions
-zig build run-json_example    # Full JSON workflow
-zig build run-error_handling  # Error management
+zig build run-basic               # Direct validation + JSON
+zig build run-advanced_types      # All 50+ types demo
+zig build run-validators          # Validator functions
+zig build run-json_example        # Full JSON workflow
+zig build run-error_handling      # Error management
+zig build run-naming_conventions  # Compile-time Casing conventions and explicit Aliases
+zig build run-custom_messages     # Custom validation messages
+zig build run-callbacks           # Lifecycle callbacks
 ```
 
 ## Building
 
 ```bash
 zig build            # Build library
-zig build test       # Run 102 tests
+zig build test       # Run 148+ tests
 zig build example    # Run basic example
 ```
 

@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: zigantic
-  text: Pydantic-like validation for Zig
-  tagline: Type-safe data validation with 50+ built-in types, human-readable errors, and zero runtime overhead.
+  text: Type-safe validation for Zig
+  tagline: Type-safe data validation with 60+ built-in types, human-readable errors, and zero runtime overhead.
   image:
     src: /logo.png
     alt: zigantic
@@ -33,6 +33,12 @@ features:
   - icon: 🔄
     title: JSON Serialization
     details: Parse and serialize JSON with automatic validation, nested struct support, and default values.
+  - icon: 💬
+    title: Custom Messages
+    details: Override validation error messages per-type with comptime config or globally via message formatter.
+  - icon: 🔄
+    title: Lifecycle Callbacks
+    details: Hooks for validation and serialization lifecycle events including before, after, per-field, and completion callbacks.
   - icon: 🔧
     title: Custom Validators
     details: Define custom validation functions, transformations, and type coercion for any use case.
@@ -77,10 +83,10 @@ pub fn main() !void {
 
 ### Release Installation (Recommended)
 
-Install the latest stable release (v0.0.2):
+Install the latest stable release for zig 0.16+ (use v0.0.3 or newer):
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/v0.0.2.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.3.tar.gz
 ```
 
 ### Nightly Installation
@@ -134,12 +140,15 @@ exe.root_module.addImport("zigantic", zigantic_dep.module("zigantic"));
 Run the included examples:
 
 ```bash
-zig build run-basic           # Direct validation + JSON
-zig build run-advanced_types  # All 50+ types demo
-zig build run-validators      # Validator functions
-zig build run-json_example    # Full JSON workflow
-zig build run-error_handling  # Error management
-zig build bench               # Run benchmarks
+zig build run-basic                  # Direct validation + JSON
+zig build run-advanced_types         # All 50+ types demo
+zig build run-validators             # Validator functions
+zig build run-json_example           # Full JSON workflow
+zig build run-error_handling         # Error management
+zig build run-naming_conventions     # Advanced naming & aliases
+zig build run-custom_messages        # Custom validation messages
+zig build run-callbacks              # Lifecycle callbacks
+zig build bench                      # Run benchmarks
 ```
 
 ## Made with love for the Zig community

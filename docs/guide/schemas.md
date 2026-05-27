@@ -1,6 +1,6 @@
 # Schemas
 
-Schemas in zigantic allow you to define complex data structures with validation rules. This is similar to Pydantic models in Python.
+Schemas in zigantic allow you to define complex data structures with validation rules.
 
 ## Defining a Schema
 
@@ -32,7 +32,7 @@ const std = @import("std");
 const z = @import("zigantic");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

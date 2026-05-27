@@ -7,7 +7,7 @@ pub fn main() !void {
     // Disable update check to prevent background thread memory leaks in examples
     z.disableUpdateCheck();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
@@ -69,12 +69,27 @@ pub fn main() !void {
     try errors.addIndexed("tags", 2, z.errors.ValidationError.TooLong, "tag too long", null);
     try errors.addWithCode("email", z.errors.ValidationError.InvalidEmail, "invalid email", "bad@", "E010");
 
+    const custom_message = struct {
+        fn f(err: z.errors.ValidationError) []const u8 {
+            return switch (err) {
+                z.errors.ValidationError.InvalidEmail => "please enter a valid email address",
+                z.errors.ValidationError.TooShort => "this value needs a longer input",
+                else => z.errorMessage(err),
+            };
+        }
+    }.f;
+
+    std.debug.print("\nCustom formatted errors:\n", .{});
+    const custom_formatted = try errors.formatAllWith(allocator, custom_message);
+    defer allocator.free(custom_formatted);
+    std.debug.print("{s}", .{custom_formatted});
+
     std.debug.print("Total errors: {d}\n", .{errors.count()});
     std.debug.print("Has 'name' error: {}\n", .{errors.containsField("name")});
     std.debug.print("Has TooShort: {}\n", .{errors.containsErrorType(z.errors.ValidationError.TooShort)});
 
     std.debug.print("\nFormatted errors:\n", .{});
-    const formatted = try errors.formatAll(allocator);
+    const formatted = try errors.formatAllColored(allocator);
     defer allocator.free(formatted);
     std.debug.print("{s}", .{formatted});
 
@@ -112,7 +127,9 @@ pub fn main() !void {
     if (!result.isValid()) {
         std.debug.print("Parsing errors ({d}):\n", .{result.error_list.count()});
         for (result.error_list.errors.items) |err| {
-            std.debug.print("  [{s}] {s}: {s}\n", .{ z.errorCode(err.error_type), err.field, err.message });
+            const colored = try err.formatColored(allocator);
+            defer allocator.free(colored);
+            std.debug.print("  {s}\n", .{colored});
         }
     }
 

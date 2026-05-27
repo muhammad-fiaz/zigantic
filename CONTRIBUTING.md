@@ -11,7 +11,7 @@ Thank you for your interest in contributing to zigantic!
    cd zigantic
    ```
 
-2. Ensure you have Zig 0.15.0 or later installed.
+2. Ensure you have Zig 0.16.0 or later installed.
 
 3. Run tests:
    ```bash

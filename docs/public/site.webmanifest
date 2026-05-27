@@ -1,7 +1,7 @@
 {
   "name": "zigantic",
   "short_name": "zigantic",
-  "description": "Pydantic-like data validation and JSON serialization for Zig",
+  "description": "Type-safe data validation and JSON serialization for Zig",
   "icons": [
     {
       "src": "/zigantic/android-chrome-192x192.png",

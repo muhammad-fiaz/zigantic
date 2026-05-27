@@ -17,6 +17,15 @@ Direct validation utility functions.
 | `isValidCreditCard(str)` | Luhn algorithm   |
 | `isJwt(str)`             | JWT format       |
 | `isHexString(str)`       | Hex characters   |
+| `isHexColor(str)`        | Hex color code   |
+| `isMacAddress(str)`      | MAC address      |
+| `isIsoDate(str)`         | ISO date         |
+| `isIsoDateTime(str)`     | ISO datetime     |
+| `isCountryCode(str)`     | Country code     |
+| `isCurrencyCode(str)`    | Currency code    |
+| `isLatitude(v)`          | Latitude range   |
+| `isLongitude(v)`         | Longitude range  |
+| `isPort(v)`              | Port number      |
 | `isBase64(str)`          | Base64 format    |
 
 ## String Validators
@@ -75,6 +84,15 @@ v.isSlug("hello-world")   // true
 v.isSemver("1.2.3")       // true
 v.isPhoneNumber("+1234567890") // true
 v.isJwt("header.payload.signature") // true
+v.isHexColor("#ff5733")      // true
+v.isMacAddress("00:1A:2B:3C:4D:5E") // true
+v.isIsoDate("2024-01-15")    // true
+v.isIsoDateTime("2024-01-15T10:30:00Z") // true
+v.isCountryCode("US")        // true
+v.isCurrencyCode("USD")      // true
+v.isLatitude(45.0)            // true
+v.isLongitude(-75.0)          // true
+v.isPort(443)                 // true
 
 // String validation
 v.isAlphanumeric("abc123") // true
