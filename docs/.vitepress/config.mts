@@ -15,16 +15,17 @@ export const ADSENSE_CLIENT_ID = "ca-pub-2040560600290490";
 // SEO Keywords
 export const KEYWORDS = "zig, zigantic, validation, json, serialization, types, compile-time, data validation, type-safe, email validation, url validation, uuid, ipv4, ipv6, iban, isbn, base58";
 
+
 export default defineConfig({
   lang: "en-US",
   title: SITE_NAME,
   description: SITE_DESCRIPTION,
   base: "/zigantic/",
   lastUpdated: true,
-  cleanUrls: true,
+  cleanUrls: false,
 
   sitemap: {
-    hostname: SITE_URL,
+    hostname: `${SITE_URL}/`,
   },
 
   vite: {
@@ -64,8 +65,7 @@ export default defineConfig({
     ["meta", { name: "twitter:image", content: `${SITE_URL}/cover.png` }],
     ["meta", { name: "twitter:creator", content: "@muhammadfiaz_" }],
 
-    // Canonical URL
-    ["link", { rel: "canonical", href: SITE_URL }],
+    // Canonical URLs are emitted per page in transformPageData.
 
     // Favicons
     ["link", { rel: "icon", href: "/zigantic/favicon.ico" }],
@@ -102,11 +102,6 @@ gtag('config', '${GA_ID}');`,
             {},
             `(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start': new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0], j=d.createElement(s), dl=l!='dataLayer'?'&l='+l:''; j.async=true; j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl; f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','${GTM_ID}');`,
           ],
-          [
-            "noscript",
-            {},
-            `<iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}" height="0" width="0" style="display:none;visibility:hidden"></iframe>`,
-          ],
         ] as [string, Record<string, string>, string][])
       : []),
 
@@ -119,14 +114,29 @@ gtag('config', '${GA_ID}');`,
         crossorigin: "anonymous",
       },
     ],
+    // Microsoft Clarity
+    [
+      "script",
+      {},
+      `(function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+      })(window, document, "clarity", "script", "z5vdzih779");`,
+    ],
   ],
 
   ignoreDeadLinks: [/.*\.zig$/],
 
+  transformHtml(html) {
+    const noscript = `<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>`;
+    return html.replace(/<body([^>]*)>/, `<body$1>\n    ${noscript}`);
+  },
+
   transformPageData(pageData) {
     const pageTitle = pageData.title || SITE_NAME;
     const pageDescription = pageData.description || SITE_DESCRIPTION;
-    const canonicalUrl = `${SITE_URL}/${pageData.relativePath.replace(/((^|\/)index)?\.md$/, "$2").replace(/\.md$/, "")}`;
+    const canonicalUrl = `${SITE_URL}/${pageData.relativePath.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, ".html")}`;
 
     pageData.frontmatter.head ??= [];
     pageData.frontmatter.head.push(
@@ -231,39 +241,18 @@ gtag('config', '${GA_ID}');`,
     graph.push(primarySchema);
 
     // 3. BreadcrumbList Schema
-    const breadcrumbs: any[] = [
-      {
-        "@type": "ListItem",
-        position: 1,
-        name: "Home",
-        item: SITE_URL,
-      },
+    const breadcrumbs: Record<string, unknown>[] = [
+      { "@type": "ListItem", position: 1, name: "Home", item: `${SITE_URL}/` },
     ];
-
     if (!isHome) {
-      const pathParts = pageData.relativePath.replace(/\.md$/, "").split("/");
-      let currentPath = SITE_URL;
-
-      pathParts.forEach((part, index) => {
-        currentPath += `/${part}`;
-        const name = part
-          .split("-")
-          .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-          .join(" ");
-
-        breadcrumbs.push({
-          "@type": "ListItem",
-          position: index + 2,
-          name: name,
-          item: index === pathParts.length - 1 ? canonicalUrl : currentPath,
-        });
+      breadcrumbs.push({
+        "@type": "ListItem",
+        position: 2,
+        name: pageTitle,
+        item: canonicalUrl,
       });
     }
-
-    graph.push({
-      "@type": "BreadcrumbList",
-      itemListElement: breadcrumbs,
-    });
+    graph.push({ "@type": "BreadcrumbList", itemListElement: breadcrumbs });
 
     pageData.frontmatter.head.push([
       "script",
