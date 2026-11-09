@@ -1,167 +1,124 @@
+---
+title: Schemas
+description: How zigantic schemas work as Zig types, from primitives and objects to collections, unions and modifiers.
+keywords: zigantic schemas, zig schema types, object schema, array schema, union schema, schema composition
+---
+
 # Schemas
 
-Schemas in zigantic allow you to define complex data structures with validation rules.
+Every constructor returns a type. Use it directly as a field schema, or refer to
+`S.Value` for the validated Zig type.
 
-## Defining a Schema
-
-A schema in zigantic is simply a Zig struct with validated fields:
-
-```zig
-const z = @import("zigantic");
-
-const UserSchema = struct {
-    // Required fields with validation
-    id: z.PositiveInt(u32),
-    name: z.String(1, 100),
-    email: z.Email,
-    
-    // Optional fields
-    bio: ?z.String(0, 500) = null,
-    website: ?z.Url = null,
-    
-    // Fields with defaults
-    role: z.Default([]const u8, "user"),
-    active: z.Default(bool, true),
-};
-```
-
-## Parsing JSON into a Schema
+## Primitives
 
 ```zig
-const std = @import("std");
-const z = @import("zigantic");
-
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    const json =
-        \\{
-        \\  "id": 123,
-        \\  "name": "Alice Johnson",
-        \\  "email": "alice@example.com",
-        \\  "bio": "Software developer",
-        \\  "role": "admin"
-        \\}
-    ;
-
-    var result = try z.fromJson(UserSchema, json, allocator);
-    defer result.deinit();
-
-    if (result.value) |user| {
-        std.debug.print("User: {s} ({s})\n", .{user.name.get(), user.email.get()});
-        std.debug.print("Role: {s}\n", .{user.role.get()});
-    }
-}
+const Name = z.string(.{ .min = 1, .max = 64, .trim = true, .case = .lower });
+const Age = z.integer(u8, .{ .min = 18, .max = 120, .even = true });
+const Score = z.float(f64, .{ .min = 0, .max = 1, .finite = true });
+const Active = z.boolean(.{});
+const Role = z.enumType(enum { user, admin }, .{});
+const Kind = z.literal("user");
+const Nothing = z.nullValue(.{});
 ```
 
-## Nested Schemas
-
-Schemas can be nested for complex data structures:
+## Objects
 
 ```zig
-const Address = struct {
-    street: z.String(1, 200),
-    city: z.String(1, 100),
-    country: z.String(2, 100),
-    postal_code: z.String(1, 20),
-};
-
-const Company = struct {
-    name: z.String(1, 100),
-    website: z.HttpsUrl,
-    employees: z.PositiveInt(u32),
-};
-
-const Profile = struct {
-    user: UserSchema,
-    address: Address,
-    company: ?Company = null,
-};
+const UserSchema = z.object(User, .{
+    .name = z.string(.{}),
+    .email = z.email(.{}),
+}, .{
+    .naming = .snake_case,
+    .unknown_fields = .reject,
+    .aliases = &.{.{ .field = "name", .keys = &.{"full_name"} }},
+    .partial = false,
+});
 ```
 
-## Schema with Collections
+`unknown_fields` may be `.reject` (default) or `.strip`. `.partial` allows any
+field to be missing; omitted fields keep their model default or the model's zero
+value.
 
-Use validated collections in your schemas:
+When a separate Zig model is unnecessary, `z.objectOf` infers the struct with
+Zig 0.17's `@Struct` builtin. The inferred type is available as `S.Value`.
 
 ```zig
-const BlogPost = struct {
-    title: z.String(1, 200),
-    content: z.String(1, 50000),
-    author: z.Email,
-    tags: z.List([]const u8, 1, 10),  // 1-10 tags
-    published: z.Default(bool, false),
-};
+const Profile = z.objectOf(.{
+    .name = z.string(.{ .min = 1 }),
+    .age = z.optional(z.integer(u8, .{ .min = 18 })),
+}, .{});
 ```
 
-## Schema Validation
+`z.object` still verifies field types and reports a build error when a schema
+does not produce the declared model field. `z.objectOf` derives every field
+type, default and optionality from the schemas themselves.
 
-All fields are validated when parsing:
+## Tuples and intersections
 
 ```zig
-const json =
-    \\{
-    \\  "title": "",
-    \\  "content": "Hello",
-    \\  "author": "invalid-email",
-    \\  "tags": []
-    \\}
-;
+const Point = z.tuple(.{
+    .x = z.float(f64, .{}),
+    .y = z.float(f64, .{}),
+}, .{});
 
-var result = try z.fromJson(BlogPost, json, allocator);
-defer result.deinit();
-
-if (!result.isValid()) {
-    for (result.error_list.errors.items) |err| {
-        std.debug.print("[{s}] {s}: {s}\n", .{
-            z.errorCode(err.error_type),
-            err.field,
-            err.message,
-        });
-    }
-    // Output:
-    // [E001] title: value is too short
-    // [E010] author: must be a valid email
-    // [E030] tags: too few items
-}
+const Range = z.intersection(.{
+    .bounded = z.integer(u16, .{ .min = 10, .max = 100 }),
+    .even = z.refine(z.integer(u16, .{}), .{ .check = isEven, .message = "must be even" }),
+}, .{});
 ```
 
-## Serializing Schemas
+`z.tuple` synthesizes a real Zig tuple with `@Tuple`; each position keeps its
+own schema type. `z.intersection` requires every member to produce the same
+`Value`, decodes once and checks the result against every member.
+See [Inferred Objects, Tuples & Intersections](/guide/inference) for their
+compile-time rules, query encoding and JSON Schema output.
 
-Convert schemas back to JSON:
+## Collections
 
 ```zig
-const post = BlogPost{
-    .title = try z.String(1, 200).init("My First Post"),
-    .content = try z.String(1, 50000).init("Hello, world!"),
-    .author = try z.Email.init("author@example.com"),
-    .tags = try z.List([]const u8, 1, 10).init(&.{"zig", "tutorial"}),
-    .published = z.Default(bool, false).init(),
-};
-
-const json_str = try z.toJsonPretty(post, allocator);
-defer allocator.free(json_str);
-std.debug.print("{s}\n", .{json_str});
+const Tags = z.array(z.string(.{ .min = 1 }), .{ .max = 8, .unique = true });
+const Scores = z.record(z.integer(u16, .{}), .{ .max = 100 });
 ```
 
-## Best Practices
+`array` produces `[]const T`; `record` produces
+`std.array_hash_map.String(T)`. See [Collections](/guide/collections) for
+all size, uniqueness and key options.
 
-1. **Use meaningful type aliases** - Create type aliases for reusable validation types
-2. **Group related fields** - Use nested structs for logical grouping
-3. **Set sensible defaults** - Use `Default` type for optional configuration
-4. **Document constraints** - Add comments explaining validation rules
-5. **Handle errors gracefully** - Always check `result.isValid()` before using values
+## Unions
 
 ```zig
-// Good: Meaningful type aliases
-const Username = z.String(3, 30);
-const Bio = z.String(0, 500);
-const Age = z.Int(i32, 13, 120);
+const Payload = union(enum) { text: []const u8, count: i64 };
+const PayloadSchema = z.unionOf(Payload, .{
+    .text = z.string(.{}),
+    .count = z.integer(i64, .{}),
+}, .{});
 
-const UserProfile = struct {
-    username: Username,
-    bio: ?Bio = null,
-    age: Age,
-};
+const Event = union(enum) { created: Created, deleted: Deleted };
+const EventSchema = z.discriminatedUnion(Event, "type", .{
+    .created = z.object(Created, .{ .type = z.literal("created"), .id = z.integer(u64, .{}) }, .{}),
+    .deleted = z.object(Deleted, .{ .type = z.literal("deleted"), .id = z.integer(u64, .{}) }, .{}),
+}, .{});
 ```
+
+The union type is declared by the user, so the decoded value keeps its Zig
+representation and exhaustive `switch` handling. See [Unions](/guide/unions)
+for discriminator errors and encoding rules.
+
+## Modifiers
+
+```zig
+const Maybe = z.optional(z.string(.{}));          // ?[]const u8, absence allowed
+const Nullable = z.nullable(z.string(.{}));       // ?[]const u8, explicit null
+const Retries = z.withDefault(z.integer(u8, .{}), 3);
+const Created = z.withDefaultFactory(z.string(.{}), makeId);
+const Port = z.fallback(z.integer(u16, .{ .max = 1024 }), 8080);
+const Even = z.refine(z.integer(u32, .{}), .{ .check = isEven, .message = "must be even" });
+const Parsed = z.transform(z.string(.{}), .{ .decode = parseUuid });
+const Tree = z.lazy(NodeSchema);
+```
+
+`optional` accepts a missing field and rejects an explicit `null`; `nullable`
+accepts JSON `null`. They are not interchangeable. A `transform` is reversible
+only when it supplies `.encode`; without one, `encode` returns
+`error.Unsupported`. See [Modifiers](/guide/modifiers) for defaults, fallbacks
+and recursive schemas.

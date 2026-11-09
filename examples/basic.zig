@@ -1,65 +1,29 @@
-//! Basic Example - Direct Validation and JSON Parsing
-
 const std = @import("std");
 const z = @import("zigantic");
 
 pub fn main() !void {
-    // Disable update check to prevent background thread memory leaks in examples
-    z.disableUpdateCheck();
+    const allocator = std.heap.page_allocator;
 
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const Email = z.email(.{});
+    var good = try z.parse(Email, allocator, "\"ada@example.com\"", .{});
+    defer good.deinit();
+    std.debug.print("email: {s}\n", .{good.value.?});
 
-    std.debug.print("=== zigantic Basic Example ===\n\n", .{});
+    const Age = z.integer(u8, .{ .min = 18, .max = 120 });
+    var bad = try z.parse(Age, allocator, "12", .{});
+    defer bad.deinit();
+    if (!bad.ok()) {
+        const text = try bad.errors().render(allocator, .{});
+        defer allocator.free(text);
+        std.debug.print("{s}", .{text});
+    }
 
-    // Direct validation
-    std.debug.print("--- Direct Validation ---\n", .{});
-    const name = try z.String(1, 50).init("Alice");
-    const age = try z.Int(i32, 18, 120).init(25);
-    const email = try z.Email.init("alice@example.com");
-    std.debug.print("Name: {s}, Age: {d}, Email: {s}\n", .{ name.get(), age.get(), email.get() });
-    std.debug.print("Domain: {s}\n\n", .{email.domain()});
-
-    // JSON parsing
-    std.debug.print("--- JSON Parsing ---\n", .{});
-    const User = struct {
-        name: z.String(1, 50),
-        age: z.Int(i32, 18, 120),
-        email: z.Email,
-        role: z.Default([]const u8, "user"),
-    };
-
-    const json =
-        \\{"name": "Bob", "age": 30, "email": "bob@example.com"}
-    ;
-
-    var result = try z.fromJson(User, json, allocator);
+    const Code = z.string(.{ .len = 4, .charset = .numeric });
+    var result = try z.parse(Code, allocator, "\"12a4\"", .{});
     defer result.deinit();
-
-    if (result.value) |user| {
-        std.debug.print("User: {s}, {d}, {s}, {s}\n\n", .{
-            user.name.get(),
-            user.age.get(),
-            user.email.get(),
-            user.role.get(),
-        });
+    if (!result.ok()) {
+        const text = try result.errors().render(allocator, .{ .capability = .ansi16 });
+        defer allocator.free(text);
+        std.debug.print("{s}", .{text});
     }
-
-    // Validation errors
-    std.debug.print("--- Validation Errors ---\n", .{});
-    const bad =
-        \\{"name": "", "age": 10, "email": "invalid"}
-    ;
-
-    var bad_result = try z.fromJson(User, bad, allocator);
-    defer bad_result.deinit();
-
-    if (!bad_result.isValid()) {
-        for (bad_result.error_list.errors.items) |err| {
-            std.debug.print("  {s}: {s}\n", .{ err.field, err.message });
-        }
-    }
-
-    std.debug.print("\n=== Done ===\n", .{});
 }

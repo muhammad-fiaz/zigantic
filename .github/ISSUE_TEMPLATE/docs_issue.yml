@@ -52,7 +52,7 @@ body:
     attributes:
       label: Documentation Location
       description: Where is the documentation issue? (URL or file path)
-      placeholder: "e.g., https://muhammad-fiaz.github.io/zigantic/guide/getting-started or README.md"
+      placeholder: "e.g., https://muhammad-fiaz.github.io/zigantic/guide/introduction or README.md"
     validations:
       required: true
 

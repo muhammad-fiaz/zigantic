@@ -1,113 +1,123 @@
+---
+title: Introduction
+description: zigantic validates JSON, query strings and forms into declared or inferred Zig types with compile-time schemas, explicit allocators and structured errors.
+keywords: zigantic, zig validation, zig schema, json validation, allocator explicit, zig 0.17, inferred structs
+---
+
 # Introduction
 
-**zigantic** is a data validation library for Zig. It brings the power of type-safe validation to Zig, using the type system for compile-time guarantees.
+zigantic validates wire data and decodes it into ordinary Zig values. A schema
+is a **type**: `z.string(.{})`, `z.integer(u8, .{})` and
+`z.object(Model, .{...}, .{})` each return a type with a `Value` declaration and
+a common operation set:
 
-## What is zigantic?
+- `decode`: a `std.json.Value` tree to `Value`;
+- `check`: validate an already-typed `Value`;
+- `encode`: write a `Value` through the standard JSON writer;
+- `writeJsonSchema`: emit a JSON Schema description;
+- `decodeString`: decode one textual component for query and form input, where
+  the schema has a text representation.
 
-zigantic allows you to:
+Composition is resolved by the compiler. Invalid field types, unknown fields,
+mismatched union variants and incompatible intersections fail the build. There
+is no runtime schema interpreter.
 
-- **Define validation rules as types** - Instead of runtime checks, validation constraints are expressed as types
-- **Parse JSON with automatic validation** - Convert JSON to validated Zig structs in one step
-- **Serialize validated data** - Convert structs back to JSON easily
-- **Get human-readable errors** - Field-aware error messages with error codes
+## Zig 0.17 standard-library reuse
 
-## Why zigantic?
+The implementation targets Zig 0.17 and reuses the current standard library
+instead of maintaining parallel parsers, writers, URI logic or calendar code:
 
-### Compile-Time Guarantees
+- `std.json` parses input into `std.json.Value` and `std.json.Stringify` writes
+  output through `std.Io.Writer`;
+- `std.Uri` and `std.SemanticVersion` back URL and semantic-version checks;
+- `std.ascii` supplies character classification and case conversion;
+- `std.math` supplies integer bounds, finite checks and ordering;
+- `std.array_hash_map.String` is the record value type;
+- `std.Io.Clock.Timestamp` is used by the benchmark harness.
 
-Validation rules are expressed as types, so invalid constraints fail at compile time:
+Zig 0.17 syntax is used throughout, including `@typeInfo(...).@"struct"`,
+`@typeName`, `@Struct`, `@Tuple`, `std.Io.Writer` and `std.mem.Allocator`.
+Only the Zig 0.17 package in the repository CI is supported.
 
-```zig
-// This won't compile - min > max
-const Invalid = z.String(100, 10); // Compile error!
-```
+## Declared and inferred models
 
-### Self-Documenting Code
-
-Types describe their own constraints:
+A schema can bind to a model you declare:
 
 ```zig
 const User = struct {
-    name: z.String(1, 50),      // 1-50 characters
-    age: z.Int(i32, 18, 120),   // 18-120
-    email: z.Email,             // Valid email format
+    name: []const u8,
+    age: u8,
 };
+
+const UserSchema = z.object(User, .{
+    .name = z.string(.{ .min = 1 }),
+    .age = z.integer(u8, .{ .min = 18 }),
+}, .{});
 ```
 
-### Zero Runtime Overhead
-
-Unused features have no cost. If you don't use JSON parsing, it's not compiled in.
-
-### IDE Support
-
-Full type information everywhere - autocomplete, hover documentation, and refactoring support.
-
-## Quick Example
+Zig 0.17 can also construct types. `z.objectOf` synthesizes a struct with
+`@Struct`, `z.tuple` synthesizes a tuple with `@Tuple`, and `z.intersection`
+checks several schemas against one value:
 
 ```zig
-const std = @import("std");
-const z = @import("zigantic");
+const Profile = z.objectOf(.{
+    .name = z.string(.{ .min = 1 }),
+    .age = z.integer(u8, .{ .min = 18 }),
+}, .{});
 
-pub fn main() !void {
-    // Direct validation
-    const email = try z.Email.init("user@example.com");
-    std.debug.print("Domain: {s}\n", .{email.domain()});
-
-    // JSON parsing
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    const User = struct {
-        name: z.String(1, 50),
-        age: z.Int(i32, 0, 150),
-    };
-
-    const json = 
-        \\{"name": "Alice", "age": 25}
-    ;
-
-    var result = try z.fromJson(User, json, allocator);
-    defer result.deinit();
-
-    if (result.value) |user| {
-        std.debug.print("User: {s}, Age: {d}\n", .{user.name.get(), user.age.get()});
-    }
-}
+const Point = z.tuple(.{
+    .x = z.float(f64, .{}),
+    .y = z.float(f64, .{}),
+}, .{});
 ```
 
-## Key Features
+See [Inferred Objects, Tuples & Intersections](/guide/inference) for the full
+rules and examples.
 
-| Feature | Description |
-|---------|-------------|
-| **50+ Built-in Types** | Strings, numbers, emails, URLs, UUIDs, dates, coordinates, and more |
-| **JSON Serialization** | Parse and serialize JSON with automatic validation |
-| **Custom Validators** | Define your own validation logic with `Custom` type |
-| **Transformations** | Transform values during validation with `Transform` type |
-| **Default Values** | Specify defaults with `Default` type |
-| **Partial Types** | Make all fields optional with `Partial` |
-| **Human-Readable Errors** | Field-aware messages with error codes |
+## Complete schema surface
 
-## Type Categories
+- Objects: `z.object` for declared models and `z.objectOf` for inferred ones,
+  with naming policies, aliases, unknown-field policy and defaults.
+- Collections: `z.array` with length and uniqueness constraints, and
+  `z.record` backed by `std.array_hash_map.String`.
+- Products and sums: `z.tuple`, `z.intersection`, `z.unionOf` and
+  `z.discriminatedUnion`.
+- Primitives: strings and formats, integers, floats, booleans, enums, literals
+  and null.
+- Modifiers: `optional`, `nullable`, `withDefault`, `withDefaultFactory`,
+  `fallback`, `refine`, `transform`, `lazy` and `custom`.
+- Wire services: `z.parse`, `z.stringify`, `z.parseQuery`, `z.parseForm`,
+  `z.stringifyQuery`, `z.validate` and `z.jsonSchema`.
+- Date and time: `z.Date`, `z.Time` and `z.DateTime` for calendar arithmetic
+  after the ISO 8601 string schemas validate the wire text.
 
-### String Types
-`String`, `NonEmptyString`, `Trimmed`, `Lowercase`, `Uppercase`, `Alphanumeric`, `AsciiString`, `Secret`, `StrongPassword`
+## Ownership
 
-### Number Types
-`Int`, `UInt`, `PositiveInt`, `NonNegativeInt`, `NegativeInt`, `EvenInt`, `OddInt`, `MultipleOf`, `Float`, `Percentage`, `Probability`, `PositiveFloat`, `NegativeFloat`, `FiniteFloat`
+Validation predicates allocate nothing. Decoding allocates from a per-result
+arena owned by the caller's allocator; `ParseResult.deinit` frees everything.
+The library never opens files, reads environment variables or keeps global
+configuration. Every service takes a trailing options value, and every
+allocation is visible in its signature.
 
-### Format Types  
-`Email`, `Url`, `HttpsUrl`, `Uuid`, `Ipv4`, `Ipv6`, `Slug`, `Semver`, `PhoneNumber`, `CreditCard`, `Regex`, `Base64`, `HexString`, `HexColor`, `MacAddress`, `IsoDateTime`, `IsoDate`, `CountryCode`, `CurrencyCode`, `Latitude`, `Longitude`, `Port`
+## Composition and wire boundaries
 
-### Collection Types
-`List`, `NonEmptyList`, `FixedList`
+Schemas nest freely inside objects, arrays, records, tuples and unions.
+Modifiers distinguish absent keys from explicit `null`, make mappings
+reversible with `.encode`, and support recursive models with `z.lazy`.
+Recursive JSON Schema output uses `$defs` and `$ref` instead of a permissive
+placeholder.
 
-### Special Types
-`Default`, `Custom`, `Transform`, `Coerce`, `Literal`, `Partial`, `OneOf`, `Range`, `Nullable`, `Lazy`
+Some values deliberately have no external representation. A `z.custom` value
+is check-only: `decode` reports `E021` and `encode` and JSON Schema return
+`error.Unsupported`. A `transform` without `.encode` is likewise not
+serializable. Query serialization traverses objects, records, tuples, arrays,
+intersections, lazy nodes and scalar leaves; unions, transforms without a query
+form and custom values return `error.Unsupported` instead of emitting
+incomplete text.
 
-## Next Steps
+## What it is not
 
-- [Installation](/guide/installation) - Install zigantic in your project
-- [Getting Started](/guide/getting-started) - Create your first validation
-- [Types API](/api/types) - Full reference for all types
-- [JSON API](/api/json) - JSON serialization and deserialization
+- Not an ORM or a database layer.
+- Not a replacement for `std.json`; it builds on it.
+- Not a runtime schema interpreter; schemas and their checks exist at compile
+  time, and decoded values are ordinary Zig values.
