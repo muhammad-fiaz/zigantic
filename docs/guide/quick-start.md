@@ -1,183 +1,87 @@
+---
+title: Quick Start
+description: Build a real zigantic schema in a few minutes, parse JSON into a Zig struct and read the validation result.
+keywords: zigantic quick start, zig json parsing, zig struct validation, parse result, allocator
+---
+
 # Quick Start
 
-Complete guide to using zigantic's 40+ validation types.
-
-## String Types
-
 ```zig
+const std = @import("std");
 const z = @import("zigantic");
 
-// Basic string
-const name = try z.String(1, 50).init("Alice");
-name.get()           // "Alice"
-name.len()           // 5
-name.startsWith("A") // true
-name.contains("lic") // true
-name.charAt(0)       // 'A'
-name.slice(0, 3)     // "Ali"
+const Address = struct { city: []const u8, postal_code: []const u8 };
+const AddressSchema = z.object(Address, .{
+    .city = z.string(.{ .min = 1 }),
+    .postal_code = z.string(.{ .len = 5, .charset = .numeric }),
+}, .{});
 
-// Trimmed (auto-removes whitespace)
-const input = try z.Trimmed(1, 50).init("  hello  ");
-input.get()         // "hello"
-input.wasTrimmed()  // true
+const User = struct {
+    name: []const u8,
+    email: []const u8,
+    age: u8,
+    address: Address,
+};
 
-// Case validation
-const lower = try z.Lowercase(50).init("hello");
-const upper = try z.Uppercase(50).init("HELLO");
-const alnum = try z.Alphanumeric(1, 50).init("abc123");
-const ascii = try z.AsciiString(1, 50).init("hello");
+const UserSchema = z.object(User, .{
+    .name = z.string(.{ .min = 1, .trim = true }),
+    .email = z.email(.{}),
+    .age = z.integer(u8, .{ .min = 18 }),
+    .address = AddressSchema,
+}, .{});
 
-// Password with strength
-const pwd = try z.Secret(8, 100).init("MyP@ss123!");
-pwd.masked()       // "********"
-pwd.strength()     // 0-6 score
-pwd.hasUppercase() // true
-pwd.hasDigit()     // true
-pwd.hasSpecial()   // true
+pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+    var result = try z.parse(UserSchema, allocator,
+        \{"name":"Ada","email":"ada@example.com","age":36,"address":{"city":"London","postal_code":"12345"}}
+    , .{});
+    defer result.deinit();
 
-// Strong password (requires all)
-const strong = try z.StrongPassword(8, 100).init("S3cur3P@ss!");
-```
-
-## Number Types
-
-```zig
-// Integer with utilities
-const age = try z.Int(i32, 0, 150).init(42);
-age.isEven()     // true
-age.isOdd()      // false
-age.isPositive() // true
-age.clamp(0, 50) // 42
-
-// Specialized integers
-const pos = try z.PositiveInt(i32).init(5);      // > 0
-const non = try z.NonNegativeInt(i32).init(0);   // >= 0
-const neg = try z.NegativeInt(i32).init(-5);     // < 0
-const even = try z.EvenInt(i32, 0, 100).init(42);
-const odd = try z.OddInt(i32, 0, 100).init(43);
-const mult = try z.MultipleOf(i32, 5).init(25);
-
-// Float with utilities
-const f = try z.Float(f64, -100.0, 100.0).init(3.7);
-f.floor() // 3.0
-f.ceil()  // 4.0
-f.round() // 4.0
-
-// Specialized floats
-const pct = try z.Percentage(f64).init(75.5);   // 0-100
-const prob = try z.Probability(f64).init(0.85); // 0-1
-const finite = try z.FiniteFloat(f64).init(3.14); // no NaN/Inf
-```
-
-## Format Types
-
-```zig
-// Email
-const email = try z.Email.init("user@company.com");
-email.domain()          // "company.com"
-email.localPart()       // "user"
-email.isBusinessEmail() // true (not gmail/yahoo)
-
-// URL
-const url = try z.Url.init("https://example.com/path");
-url.isHttps()   // true
-url.protocol()  // "https"
-url.host()      // "example.com"
-
-// HTTPS only
-const https = try z.HttpsUrl.init("https://secure.com");
-
-// UUID with version
-const uuid = try z.Uuid.init("550e8400-e29b-41d4-a716-446655440000");
-uuid.version() // 4
-
-// IP addresses
-const ipv4 = try z.Ipv4.init("192.168.1.1");
-ipv4.isPrivate()  // true
-ipv4.isLoopback() // false
-
-const ipv6 = try z.Ipv6.init("::1");
-ipv6.isLoopback() // true
-
-// Phone and credit card
-const phone = try z.PhoneNumber.init("+1234567890");
-phone.hasCountryCode() // true
-
-const card = try z.CreditCard.init("4111111111111111");
-card.cardType() // "visa"
-card.masked()   // "1111"
-
-// Other formats
-const slug = try z.Slug.init("hello-world");
-const ver = try z.Semver.init("1.2.3");
-```
-
-## Collection Types
-
-```zig
-// List with utilities
-const items = [_][]const u8{ "a", "b", "c" };
-const list = try z.List([]const u8, 1, 10).init(&items);
-list.len()    // 3
-list.first()  // "a"
-list.last()   // "c"
-list.at(1)    // "b"
-list.isEmpty() // false
-
-// Fixed size
-const coords = [_]i32{ 10, 20, 30 };
-const fixed = try z.FixedList(i32, 3).init(&coords);
-```
-
-## Special Types
-
-```zig
-// Default values
-const Role = z.Default([]const u8, "user");
-const role = Role.initDefault();
-role.get()       // "user"
-role.isDefault() // true
-Role.getOrDefault(null) // "user"
-
-// OneOf (enum-like)
-const Status = z.OneOf(u8, &[_]u8{ 1, 2, 3 });
-const s = try Status.init(1);
-s.isFirst() // true
-s.isLast()  // false
-
-// Range with step
-const R = z.Range(i32, 0, 100, 10);
-_ = try R.init(50);  // OK
-// R.init(55) - error: NotInStep
-
-// Nullable
-const N = z.Nullable(i32);
-const some = N.init(42);
-const none = N.initNull();
-some.unwrapOr(0) // 42
-none.unwrapOr(0) // 0
-
-// Custom validator
-const isPrime = struct {
-    fn f(n: i32) bool {
-        if (n < 2) return false;
-        var i: i32 = 2;
-        while (i * i <= n) : (i += 1) {
-            if (@mod(n, i) == 0) return false;
-        }
-        return true;
+    if (result.value) |user| {
+        std.debug.print("{s} in {s}\n", .{ user.name, user.address.city });
+    } else {
+        const text = try result.errors().render(allocator, .{});
+        defer allocator.free(text);
+        std.debug.print("{s}", .{text});
     }
-}.f;
-const Prime = z.Custom(i32, isPrime);
-const p = try Prime.init(17);
+}
 ```
 
-## All Types Summary
+`parse` returns a `ParseResult`. A successful result holds the decoded value;
+a failed one holds an issue list and a null value. The input text is not
+referenced after `parse` returns.
 
-| Category       | Types                                                                                                                                                                                   |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **String**     | `String`, `NonEmptyString`, `Trimmed`, `Lowercase`, `Uppercase`, `Alphanumeric`, `AsciiString`, `Secret`, `StrongPassword`                                                              |
-| **Number**     | `Int`, `UInt`, `PositiveInt`, `NonNegativeInt`, `NegativeInt`, `EvenInt`, `OddInt`, `MultipleOf`, `Float`, `Percentage`, `Probability`, `PositiveFloat`, `NegativeFloat`, `FiniteFloat` |
-| **Format**     | `Email`, `Url`, `HttpsUrl`, `Uuid`, `Ipv4`, `Ipv6`, `Slug`, `Semver`, `PhoneNumber`, `CreditCard`, `Regex`                                                                              |
-| **Collection** | `List`, `NonEmptyList`, `FixedList`                                                                                                                                                     |
-| **Special**    | `Default`, `Custom`, `Transform`, `Coerce`, `Literal`, `Partial`, `OneOf`, `Range`, `Nullable`, `Lazy`                                                                                  |
+## Run it
+
+Save the program as `main.zig`, add the module to your `build.zig`, and run:
+
+```bash
+zig build run
+```
+
+Expected output:
+
+```text
+Ada in London
+```
+
+Break the document on purpose, for example by changing the postal code to
+`"AB12"`, and the same program prints:
+
+```text
+error[E005]: invalid value
+  $.address.postal_code
+    expected: numeric text
+    received: "AB12"
+```
+
+## Next steps
+
+- [Schemas](/guide/schemas) explains the schema protocol and composition.
+- [Inferred Objects, Tuples & Intersections](/guide/inference) shows how to
+  derive models and fixed tuples at compile time.
+- [Validation Types](/guide/validation-types) lists every built-in format and
+  the complete string and number options.
+- [Date & Time](/guide/datetime) covers calendar arithmetic, formatting and
+  fixed-offset timestamps.
+- [Examples](/examples/) walks through nine complete programs with output.

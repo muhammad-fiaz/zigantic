@@ -1,309 +1,147 @@
+---
+title: Error Handling
+description: Understand zigantic issues, stable error codes, text and JSON rendering, message overrides, lifecycle hooks and error sets.
+keywords: zigantic errors, validation error codes, structured errors, json error output, tint colour, hooks
+---
+
 # Error Handling
 
-Comprehensive error handling with codes and utilities.
-
-## Basic Error Handling
-
-```zig
-const z = @import("zigantic");
-
-// Check validation result
-if (z.String(3, 50).init("Jo")) |name| {
-    std.debug.print("Valid: {s}\n", .{name.get()});
-} else |err| {
-    std.debug.print("Error: {s}\n", .{z.errorMessage(err)});
-    std.debug.print("Code: {s}\n", .{z.errorCode(err)});
-}
-```
-
-## Error Types
-
-| Error                | Message               | Code |
-| -------------------- | --------------------- | ---- |
-| `TooShort`           | value is too short    | E001 |
-| `TooLong`            | value is too long     | E002 |
-| `TooSmall`           | value is too small    | E003 |
-| `TooLarge`           | value is too large    | E004 |
-| `InvalidEmail`       | must be a valid email | E010 |
-| `InvalidUrl`         | must be a valid URL   | E011 |
-| `MissingField`       | field is required     | E020 |
-| `TypeMismatch`       | wrong type            | E021 |
-| `WeakPassword`       | password is too weak  | -    |
-| `MustBeEven`         | must be even          | -    |
-| `MustBeOdd`          | must be odd           | -    |
-| `NotMultiple`        | must be multiple      | -    |
-| `MustBeHttps`        | must be HTTPS         | -    |
-| `NotInAllowedValues` | not in allowed        | -    |
-
-## ErrorList
-
-Collect multiple errors:
+A schema violation is an **issue**, not a Zig error. `parse` returns a result
+that holds every issue found, so a client can report all bad fields at once.
 
 ```zig
-var errors = z.errors.ErrorList.init(allocator);
-defer errors.deinit();
-
-// Add errors
-try errors.add("name", error.TooShort, "too short", "Jo");
-try errors.addWithPath("user", "email", error.InvalidEmail, "invalid", null);
-try errors.addIndexed("tags", 2, error.TooLong, "too long", null);
-try errors.addWithCode("field", error.TooShort, "msg", null, "E001");
-
-// Check errors
-errors.hasErrors()     // true
-errors.count()         // number of errors
-errors.first()         // first error or null
-errors.last()          // last error or null
-errors.containsField("name")  // true
-errors.containsErrorType(error.TooShort) // true
-
-// Format output
-const text = try errors.formatAll(allocator);
-const json = try errors.toJsonArray(allocator);
-
-// Colorized output for terminals that support ANSI colors
-const colored = try errors.formatAllColored(allocator);
-```
-
-## Limited Error Collection
-
-```zig
-// Collect max 5 errors
-var errors = z.errors.ErrorList.initWithMax(allocator, 5);
-defer errors.deinit();
-```
-
-## JSON Output
-
-```zig
-const json = try errors.toJsonArray(allocator);
-// [{"field":"name","message":"too short","value":"Jo"},...]
-```
-
-## Error Codes
-
-```zig
-const err = z.errors.ValidationError.TooShort;
-z.errorMessage(err) // "value is too short"
-z.errorCode(err)    // "E001"
-```
-
-## JSON Parsing Errors
-
-```zig
-const User = struct {
-    name: z.String(3, 50),
-    age: z.Int(i32, 18, 120),
+pub const Issue = struct {
+    code: z.Code,
+    path: []const u8,
+    message: []const u8,
+    expected: ?[]const u8,
+    received: ?[]const u8,
 };
-
-var result = try z.fromJson(User, json, allocator);
-defer result.deinit();
-
-if (!result.isValid()) {
-    for (result.error_list.errors.items) |err| {
-        std.debug.print("[{s}] {s}: {s}\n", .{
-            z.errorCode(err.error_type),
-            err.field,
-            err.message,
-        });
-    }
-}
 ```
 
-## Merge Error Lists
+`code` is stable and machine-readable, `path` locates the value in the input,
+`message` is human-readable, and `expected`/`received` add context when it is
+useful.
+
+## Codes
+
+| Code | Name | Category |
+| --- | --- | --- |
+| `E001` | `type_mismatch` | type |
+| `E002` | `too_small` | length |
+| `E003` | `too_large` | length |
+| `E004` | `length_mismatch` | length |
+| `E005` | `invalid_value` | structure |
+| `E006` | `invalid_format` | format |
+| `E007` | `missing_field` | structure |
+| `E008` | `unknown_field` | structure |
+| `E009` | `duplicate_field` | structure |
+| `E010` | `not_in_enum` | structure |
+| `E011` | `invalid_literal` | structure |
+| `E012` | `refinement_failed` | refinement |
+| `E013` | `transform_failed` | coercion |
+| `E014` | `coercion_failed` | coercion |
+| `E015` | `union_mismatch` | structure |
+| `E016` | `out_of_range` | length |
+| `E017` | `not_finite` | range |
+| `E018` | `not_integer` | type |
+| `E019` | `missing_discriminator` | structure |
+| `E020` | `invalid_discriminator` | structure |
+| `E021` | `unsupported` | unsupported |
+
+`z.Code` exposes `label()`, `category()` and `message()`. Default messages and
+the full table are also in the [API reference](/api/reference#error-codes).
+
+## Rendering
 
 ```zig
-var errors1 = z.errors.ErrorList.init(allocator);
-var errors2 = z.errors.ErrorList.init(allocator);
-// ... add errors ...
-try errors1.merge(errors2);
+const text = try result.errors().render(allocator, .{ .capability = .ansi16 });
+defer allocator.free(text);
 ```
 
-## Validation Errors vs Library Bugs
-
-::: tip Important Distinction
-**Validation errors** are expected behavior when users provide invalid data. Handle them normally.
-
-**Library bugs** are unexpected internal errors that might indicate a problem with zigantic itself.
-:::
-
-### Validation Errors (Expected)
-
-```zig
-// This is normal - user provided invalid data
-if (z.String(3, 50).init("Jo")) |name| {
-    std.debug.print("Valid: {s}\n", .{name.get()});
-} else |err| {
-    // Handle normally - this is NOT a library bug
-    std.debug.print("Error: {s}\n", .{z.errorMessage(err)});
-}
+```text
+error[E002]: value is too small
+  $.age
+    expected: 18..120
+    received: 12
 ```
 
-### Library Bugs (Unexpected)
+`RenderOptions`:
 
-Only use `reportInternalError` for unexpected situations that might be library bugs:
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `capability` | `.none` | `.none`, `.ansi16`, `.ansi256`, `.trueColor` |
+| `show_expected` | `true` | print the expected line |
+| `show_received` | `true` | print the received line |
+| `indent` | `2` | spaces before details |
 
-```zig
-// Only for unexpected internal errors
-z.reportInternalError("Unexpected null during parsing");
+Colours come from tint.zig and are selected per call. `.none` writes no escape
+sequences, which keeps logs and redirected output clean. The library never
+detects a terminal or reads the environment.
+
+`toJson` returns a compact array with the same fields:
+
+```json
+[{"code":"E002","path":"$.age","message":"value is too small","expected":"18..120","received":"12"}]
 ```
 
-This will print a message with the GitHub issues URL for reporting.
+Use `write`/`writeJson` to stream into an existing writer without an
+intermediate allocation.
 
-## Colorized Output
+## Message overrides
 
-zigantic includes built-in ANSI colors for validation errors so terminal output stays readable and consistent:
-
-```zig
-const presentation = z.errorPresentation(z.errors.ValidationError.TooShort);
-std.debug.print("[{s}] {s}\n", .{ presentation.code, presentation.message });
-```
-
-Use `FieldError.formatColored()` or `ErrorList.formatAllColored()` for colored terminal output.
-
-## Color Overrides
-
-Override the default color for specific error types:
+Override text per call; nothing is global:
 
 ```zig
-// Set globally via helper
-z.setColorOverrides(.{
-    .too_short = .bright_red,
-    .invalid_email = .magenta,
-    .weak_password = .yellow,
+var result = try z.parse(Age, allocator, "12", .{
+    .messages = .{ .too_small = "must be old enough" },
 });
-
-// Or via Config
-var cfg = z.getConfig();
-cfg.color_overrides = .{
-    .too_short = .bright_red,
-};
-z.setConfig(cfg);
 ```
 
-Disable colors entirely:
-```zig
-z.disableColor();  // Plain text output
-z.enableColor();   // Re-enable
-```
+`z.Messages` has one optional field per code, named after the code. A `null`
+field keeps the default message. The code and path are unchanged, so clients can
+translate the category while the server customises wording.
 
-## Custom Error Messages
+## Paths
 
-Override error messages per-type via the `f` suffix variant with a comptime `messages` parameter:
+- `$` is the document root.
+- `.field` selects an object member.
+- `[0]` selects an array element.
+- Paths use the output key, so a naming policy is applied.
+- Duplicate-key failures point at the repeated key, for example `$.address.city`.
+
+## Lifecycle hooks
 
 ```zig
-const Name = z.Stringf(3, 50, .{ .too_short = "name is required" });
-const Age = z.Intf(i32, 18, 120, .{ .too_small = "must be 18+" });
-
-if (Name.init("Jo")) |_| {} else |err| {
-    std.debug.print("{s}\n", .{Name.messageFor(err).?});
-    // "name is required"
-}
+var result = try z.parse(UserSchema, allocator, input, .{
+    .hooks = .{
+        .on_start = logStart,
+        .on_field = logField,
+        .on_issue = logIssue,
+        .on_finish = logFinish,
+    },
+});
 ```
 
-Available on all parameterized types: `Stringf`, `Intf`, `Floatf`, `Listf`, `Trimmedf`, `Secretf`, `StrongPasswordf`, `HexStringf`, etc.
+| Hook | Called |
+| --- | --- |
+| `on_start(schema_name)` | before decoding starts |
+| `on_field(path, accepted)` | for each object field |
+| `on_issue(issue)` | whenever an issue is recorded |
+| `on_finish(ok, total_issues)` | after decoding, including failures |
 
-## Global Message Formatter
+Hooks are plain function pointers supplied per call, so there is no global
+logger and no hidden state. They run on the calling thread.
 
-Set a global formatter function to customize messages across all types (including format types like `Email`, `Url`, etc.):
+## Error sets
 
-```zig
-z.Config.validation_message_formatter = struct {
-    fn f(err: z.errors.ValidationError) []const u8 {
-        return switch (err) {
-            .InvalidEmail => "please enter a valid email address",
-            .TooShort => "the value is too short",
-            else => z.errorMessage(err),
-        };
-    }
-}.f;
-```
+`decode` returns `error.Reported` after recording an issue, or
+`error.OutOfMemory`. `parse` converts JSON syntax failures and duplicate keys
+under `.reject` into a result; malformed JSON surfaces as `error.InvalidJson`.
+`z.validate` returns the issue list instead of an error, so a typed check has no
+error branch beyond allocation failure.
 
-## Lifecycle Callbacks
-
-Register hooks for validation and serialization lifecycle events:
-
-```zig
-// Called before validation starts
-z.Config.before_validation_callback = struct {
-    fn call(type_name: []const u8) void {
-        std.debug.print("Validating: {s}\n", .{type_name});
-    }
-}.call;
-
-// Called after each field is validated
-z.Config.on_field_validated_callback = struct {
-    fn call(field: []const u8, valid: bool) void {
-        std.debug.print("Field {s}: {s}\n", .{ field, if (valid) "OK" else "FAIL" });
-    }
-}.call;
-
-// Called when a field validation fails
-z.Config.on_field_error_callback = struct {
-    fn call(field: []const u8, err_type: z.errors.ValidationError, msg: []const u8) void {
-        std.debug.print("Error in {s}: {s} ({s})\n", .{ field, msg, @tagName(err_type) });
-    }
-}.call;
-
-// Called after all validation is complete
-z.Config.on_validation_complete_callback = struct {
-    fn call(valid: bool, error_count: usize) void {
-        std.debug.print("Validation complete: valid={}, errors={d}\n", .{ valid, error_count });
-    }
-}.call;
-
-// Called before JSON serialization
-z.Config.before_serialize_callback = struct {
-    fn call() void {
-        std.debug.print("Starting serialization\n", .{});
-    }
-}.call;
-
-// Called after JSON serialization with the result
-z.Config.after_serialize_callback = struct {
-    fn call(result: []const u8) void {
-        std.debug.print("Serialized to {d} bytes\n", .{result.len});
-    }
-}.call;
-```
-
-## Optional Error Policies
-
-If you want zigantic to handle failures more aggressively, you can set callbacks or exit flags once at startup:
-
-```zig
-const z = @import("zigantic");
-
-pub fn main() !void {
-    z.setConfig(.{
-        .exit_on_validation_error = true,
-        .exit_on_serialization_error = true,
-        .validation_message_formatter = struct {
-            pub fn format(err: z.errors.ValidationError) []const u8 {
-                return switch (err) {
-                    z.errors.ValidationError.InvalidEmail => "please provide a valid email address",
-                    z.errors.ValidationError.TooShort => "the value is too short",
-                    else => z.errorMessage(err),
-                };
-            }
-        }.format,
-        .validation_error_callback = struct {
-            pub fn handle(msg: []const u8) void {
-                std.debug.print("VALIDATION: {s}\n", .{msg});
-            }
-        }.handle,
-        .serialization_error_formatter = struct {
-            pub fn format(err: anyerror) []const u8 {
-                return switch (err) {
-                    else => @errorName(err),
-                };
-            }
-        }.format,
-        .serialization_error_callback = struct {
-            pub fn handle(msg: []const u8) void {
-                std.debug.print("SERIALIZATION: {s}\n", .{msg});
-            }
-        }.handle,
-    });
-}
-```
+`stringify` can return `error.Unsupported` when a schema has no encoder, such as
+a transform without `.encode` or a custom value. A transform whose `.encode`
+callback fails returns `error.TransformFailed`. `float` returns
+`error.Unsupported` for non-finite numbers.

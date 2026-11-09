@@ -4,7 +4,7 @@ import llmstxt from "vitepress-plugin-llms";
 // Site configuration
 export const SITE_URL = "https://muhammad-fiaz.github.io/zigantic";
 export const SITE_NAME = "zigantic";
-export const SITE_DESCRIPTION = "Type-safe data validation and JSON serialization for Zig. 60+ validation types, compile-time driven, zero runtime overhead.";
+export const SITE_DESCRIPTION = "Type-safe, allocator-explicit validation and schema composition for Zig 0.17. JSON, query strings, structured errors and JSON Schema generation.";
 
 // Google Analytics and Google Tag Manager IDs
 export const GA_ID = "G-6BVYCRK57P";
@@ -13,12 +13,13 @@ export const GTM_ID = "GTM-P4M9T8ZR";
 // Google AdSense Client ID
 export const ADSENSE_CLIENT_ID = "ca-pub-2040560600290490";
 // SEO Keywords
-export const KEYWORDS = "zig, zigantic, validation, json, serialization, types, compile-time, data validation, type-safe, email validation, url validation, uuid, ipv4, ipv6, iban, isbn, base58";
+export const KEYWORDS = "zig, zigantic, validation, json, schema, query string, error handling, compile-time, allocator, email validation, url validation, uuid, ipv4, ipv6";
 
 
 export default defineConfig({
   lang: "en-US",
   title: SITE_NAME,
+  titleTemplate: `:title | ${SITE_NAME}`,
   description: SITE_DESCRIPTION,
   base: "/zigantic/",
   lastUpdated: true,
@@ -36,8 +37,6 @@ export default defineConfig({
     ["meta", { name: "viewport", content: "width=device-width, initial-scale=1.0" }],
     ["meta", { name: "google-adsense-account", content: ADSENSE_CLIENT_ID }],
     // Primary Meta Tags
-    ["meta", { name: "title", content: SITE_NAME }],
-    ["meta", { name: "description", content: SITE_DESCRIPTION }],
     ["meta", { name: "keywords", content: KEYWORDS }],
     ["meta", { name: "author", content: "Muhammad Fiaz" }],
     ["meta", { name: "robots", content: "index, follow" }],
@@ -135,7 +134,8 @@ gtag('config', '${GA_ID}');`,
 
   transformPageData(pageData) {
     const pageTitle = pageData.title || SITE_NAME;
-    const pageDescription = pageData.description || SITE_DESCRIPTION;
+    const pageDescription = pageData.frontmatter.description || pageData.description || SITE_DESCRIPTION;
+    pageData.description = pageDescription;
     const canonicalUrl = `${SITE_URL}/${pageData.relativePath.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, ".html")}`;
 
     pageData.frontmatter.head ??= [];
@@ -145,11 +145,17 @@ gtag('config', '${GA_ID}');`,
       ["meta", { property: "og:url", content: canonicalUrl }]
     );
 
-    if (pageData.frontmatter.description) {
-      pageData.frontmatter.head.push(
-        ["meta", { property: "og:description", content: pageData.frontmatter.description }],
-        ["meta", { name: "description", content: pageData.frontmatter.description }]
-      );
+    pageData.frontmatter.head.push(
+      ["meta", { property: "og:description", content: pageDescription }],
+      ["meta", { name: "twitter:title", content: `${pageTitle} | ${SITE_NAME}` }],
+      ["meta", { name: "twitter:description", content: pageDescription }]
+    );
+
+    if (pageData.frontmatter.keywords) {
+      pageData.frontmatter.head.push([
+        "meta",
+        { name: "keywords", content: pageData.frontmatter.keywords },
+      ]);
     }
 
     // Dynamic JSON-LD Schema
@@ -217,7 +223,7 @@ gtag('config', '${GA_ID}');`,
           priceCurrency: "USD",
         },
         downloadUrl: "https://github.com/muhammad-fiaz/zigantic",
-        softwareVersion: "0.0.3",
+        softwareVersion: "0.0.4",
         license: "https://opensource.org/licenses/MIT",
       });
     } else {
@@ -270,10 +276,11 @@ gtag('config', '${GA_ID}');`,
 
     nav: [
       { text: "Home", link: "/" },
-      { text: "Guide", link: "/guide/getting-started" },
-      { text: "API", link: "/api/types" },
+      { text: "Guide", link: "/guide/introduction" },
+      { text: "Examples", link: "/examples/" },
+      { text: "API", link: "/api/reference" },
       {
-        text: "v0.0.3",
+        text: "v0.0.4",
         items: [
           { text: "Changelog", link: "https://github.com/muhammad-fiaz/zigantic/releases" },
           { text: "Contributing", link: "https://github.com/muhammad-fiaz/zigantic/blob/main/CONTRIBUTING.md" },
@@ -295,38 +302,54 @@ gtag('config', '${GA_ID}');`,
           items: [
             { text: "Introduction", link: "/guide/introduction" },
             { text: "Installation", link: "/guide/installation" },
-            { text: "Getting Started", link: "/guide/getting-started" },
             { text: "Quick Start", link: "/guide/quick-start" },
           ],
         },
         {
           text: "Core Concepts",
           items: [
-            { text: "Philosophy", link: "/guide/philosophy" },
+            { text: "Schemas", link: "/guide/schemas" },
+            { text: "Inferred Objects & Tuples", link: "/guide/inference" },
             { text: "Validation Types", link: "/guide/validation-types" },
-            { text: "JSON Parsing", link: "/guide/json-parsing" },
+            { text: "Modifiers", link: "/guide/modifiers" },
+            { text: "Collections", link: "/guide/collections" },
+            { text: "Date & Time", link: "/guide/datetime" },
+            { text: "Unions", link: "/guide/unions" },
+            { text: "Naming & Aliases", link: "/guide/naming" },
+            { text: "JSON, Query & Forms", link: "/guide/json-parsing" },
+            { text: "JSON Schema", link: "/guide/json-schema" },
             { text: "Error Handling", link: "/guide/error-handling" },
           ],
         },
         {
           text: "Advanced",
           items: [
-            { text: "Schemas", link: "/guide/schemas" },
             { text: "Custom Validators", link: "/guide/custom-validators" },
             { text: "Benchmarks", link: "/guide/benchmarks" },
-            { text: "Version & Updates", link: "/guide/version-updates" },
+          ],
+        },
+      ],
+      "/examples/": [
+        {
+          text: "Examples",
+          items: [
+            { text: "Overview", link: "/examples/" },
+            { text: "Basic Validation", link: "/examples/basic" },
+            { text: "Model Objects", link: "/examples/model" },
+            { text: "Nested Objects", link: "/examples/nested" },
+            { text: "Collections", link: "/examples/collections" },
+            { text: "Formats", link: "/examples/formats" },
+            { text: "Unions", link: "/examples/unions" },
+            { text: "Modifiers", link: "/examples/modifiers" },
+            { text: "Structured Errors", link: "/examples/errors" },
+            { text: "Query Strings & Forms", link: "/examples/query" },
           ],
         },
       ],
       "/api/": [
         {
           text: "API Reference",
-          items: [
-            { text: "Types", link: "/api/types" },
-            { text: "Validators", link: "/api/validators" },
-            { text: "JSON", link: "/api/json" },
-            { text: "Errors", link: "/api/errors" },
-          ],
+          items: [{ text: "Reference", link: "/api/reference" }],
         },
       ],
     },
@@ -375,6 +398,4 @@ gtag('config', '${GA_ID}');`,
       dark: "github-dark",
     },
   },
-
-  lastUpdated: true,
 });

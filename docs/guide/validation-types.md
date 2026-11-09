@@ -1,286 +1,182 @@
+---
+title: Validation Types
+description: "Every zigantic primitive: string constraints and built-in formats, integer and float bounds, booleans, enums, literals and null."
+keywords: zigantic validation types, zig string validation, email format, uuid, ipv4, integer bounds, float bounds, enum schema
+---
+
 # Validation Types
 
-Complete reference for all 40+ validation types.
+This page lists every built-in schema, the options it accepts and the failures
+it can produce.
 
-## String Types
+## Strings
 
-### z.String(min, max)
+`z.string(.{})` is a `[]const u8`. Every format constructor accepts the same
+`z.StringConfig`, so a format composes with length and character rules.
 
-String with length constraints and utilities.
+| Option | Type | Default | Failure |
+| --- | --- | --- | --- |
+| `min` | `usize` | `0` | `E002` |
+| `max` | `usize` | `maxInt(usize)` | `E003` |
+| `len` | `?usize` | `null` | `E004` |
+| `prefix` | `?[]const u8` | `null` | `E005` |
+| `suffix` | `?[]const u8` | `null` | `E005` |
+| `contains` | `?[]const u8` | `null` | `E005` |
+| `trim` | `bool` | `false` | none; normalises first |
+| `case` | `z.StringCase` | `.any` | `E005` |
+| `charset` | `z.StringCharset` | `.any` | `E005` |
+| `description` | `[]const u8` | `""` | none; JSON Schema only |
 
-```zig
-const Name = z.String(1, 50);
-const name = try Name.init("Alice");
-name.get()           // "Alice"
-name.len()           // 5
-name.isEmpty()       // false
-name.startsWith("A") // true
-name.endsWith("e")   // true
-name.contains("lic") // true
-name.charAt(0)       // 'A'
-name.slice(0, 3)     // "Ali"
-```
+`z.StringCase`: `.any`, `.lower`, `.upper`.
 
-### z.Trimmed(min, max)
-
-Auto-trims whitespace.
-
-```zig
-const input = try z.Trimmed(1, 50).init("  hello  ");
-input.get()        // "hello"
-input.getOriginal() // "  hello  "
-input.wasTrimmed() // true
-```
-
-### z.Secret(min, max)
-
-Password with strength checking.
+`z.StringCharset`: `.any`, `.ascii`, `.printable`, `.alphabetic`,
+`.alphanumeric`, `.numeric`, `.hex`.
 
 ```zig
-const pwd = try z.Secret(8, 100).init("MyP@ss123!");
-pwd.masked()       // "********"
-pwd.strength()     // 0-6 score
-pwd.hasUppercase() // true
-pwd.hasLowercase() // true
-pwd.hasDigit()     // true
-pwd.hasSpecial()   // true
+const Handle = z.string(.{
+    .min = 3,
+    .max = 32,
+    .prefix = "@",
+    .charset = .alphanumeric,
+    .trim = true,
+});
 ```
 
-### z.StrongPassword(min, max)
+`trim` removes ASCII whitespace before the length, prefix, suffix, contains,
+case, charset and format checks, and the returned slice excludes it.
 
-Requires uppercase, lowercase, digit, and special character.
+## Built-in formats
+
+| Constructor | Accepted form | Expected text |
+| --- | --- | --- |
+| `email` | RFC 5322 subset with dotted domain and alphabetic TLD | `email address` |
+| `url` | absolute URL with scheme and host | `absolute URL` |
+| `httpsUrl` | absolute URL with the `https` scheme | `HTTPS URL` |
+| `uuid` | 8-4-4-4-12 hexadecimal | `UUID` |
+| `ulid` | 26 Crockford base32 characters, first `0-7` | `ULID` |
+| `slug` | lowercase words separated by single hyphens | `kebab-case slug` |
+| `semver` | Semantic Version 2.0.0 | `semantic version` |
+| `phoneNumber` | optional `+`, 7-15 digits, separators allowed | `phone number` |
+| `creditCard` | 12-19 digits with Luhn checksum | `payment card number` |
+| `jwt` | three non-empty base64url segments | `JSON Web Token` |
+| `base64` / `base64Url` | strict alphabet and padding | `base64 text` / `base64url text` |
+| `hex` | even-length hexadecimal | `even-length hexadecimal text` |
+| `hexColor` | `#RGB`, `#RRGGBB`, `#RRGGBBAA` | `hex colour` |
+| `macAddress` | six octet pairs with a consistent separator | `MAC address` |
+| `ipv4` / `ipv6` | RFC 4291 text form, including `::` and IPv4 tails | `IPv4 address` / `IPv6 address` |
+| `isoDate` | `YYYY-MM-DD` with calendar checks | `ISO 8601 date` |
+| `isoTime` | `HH:MM[:SS[.fff]][Z|±HH:MM]` | `ISO 8601 time` |
+| `isoDateTime` | date, `T` or space, time | `ISO 8601 date-time` |
+| `isoDuration` | `P...` with date/time components | `ISO 8601 duration` |
+
+Format failures are `E006`. They are checked after length, prefix/suffix,
+contains, case and charset, so the most specific rule wins in order.
+
+`creditCard` accepts spaces and hyphens as separators. `ipv6` accepts IPv4-mapped
+and IPv4-compatible tails. `isoDate` rejects `2025-02-29` and accepts
+`2024-02-29`.
+
+## Date and time values
+
+The ISO string schemas validate wire text. When an application needs calendar
+arithmetic, parse the validated text into `z.Date`, `z.Time` or `z.DateTime`:
 
 ```zig
-const pwd = try z.StrongPassword(8, 100).init("S3cur3P@ss!");
-// z.StrongPassword(8, 100).init("password") -> WeakPassword error
+const date = try z.Date.parse("2024-02-29");
+const next = date.addYears(1);      // 2025-02-28
+const weekday = date.weekday();     // .thursday
+
+const value = try z.DateTime.parse("2024-02-29T23:30:00+02:00");
+const later = value.addSeconds(3600);
 ```
 
-### z.StrongPasswordStrict
+These types are allocation-free, reject invalid calendar dates, clamp month
+arithmetic to the target month's last day, and preserve a fixed UTC offset.
+`z.datetime.isLeapYear` and `z.datetime.daysInMonth` expose the same rules. See
+[Date & Time](/guide/datetime) for formatting, timestamps and comparison.
 
-Built-in strong password (min 8 chars, upper+lower+digit+special). No parameters needed.
+## Predicates
+
+The same checks are exported without a schema:
 
 ```zig
-const pwd = try z.StrongPasswordStrict.init("P@ssw0rd!");
-pwd.masked() // "********"
-pwd.len()    // 9
+z.validators.isEmail("a@example.com");
+z.validators.isIpv6("2001:db8::1");
+z.validators.isCreditCard("4242 4242 4242 4242");
+z.validators.luhn("4242424242424242");
+z.validators.isIsoDuration("PT30M");
 ```
 
-### Other String Types
+All predicates take `[]const u8`, allocate nothing and return `bool`. They are
+safe in hot paths and in `refine` callbacks.
 
-| Type                     | Description                   |
-| ------------------------ | ----------------------------- |
-| `NonEmptyString(max)`    | Alias for `String(1, max)`    |
-| `Lowercase(max)`         | Must be all lowercase         |
-| `Uppercase(max)`         | Must be all uppercase         |
-| `Alphanumeric(min, max)` | Letters and digits only       |
-| `AsciiString(min, max)`  | ASCII characters only (0-127) |
-| `AsciiAlphaString(min, max)` | ASCII letters only (A-Z, a-z) |
-| `AsciiPrintableString(min, max)` | ASCII printable (0x20-0x7E) |
+## Integers
 
-## Number Types
+`z.integer(T, .{})` produces any signed or unsigned integer type `T`.
 
-### z.Int(T, min, max)
+| Option | Type | Default | Failure |
+| --- | --- | --- | --- |
+| `min` | `?comptime_int` | `null` | `E002` |
+| `max` | `?comptime_int` | `null` | `E003` |
+| `even` | `bool` | `false` | `E005` |
+| `multiple_of` | `?comptime_int` | `null` | `E005` |
+| `description` | `[]const u8` | `""` | none |
 
-Signed integer with range and utilities.
+Bounds must fit `T`; a bound outside the type's range is a compile error. A
+value outside `T` is `E016`, a fractional JSON number is `E018`, and a
+non-numeric JSON value is `E001`.
 
 ```zig
-const n = try z.Int(i32, -100, 100).init(42);
-n.get()        // 42
-n.isPositive() // true
-n.isNegative() // false
-n.isZero()     // false
-n.isEven()     // true
-n.isOdd()      // false
-n.abs()        // 42
-n.clamp(0, 50) // 42
+z.integer(i32, .{ .min = -10, .max = 10, .multiple_of = 2 });
+z.integer(u8, .{ .even = true });
 ```
 
-### z.Float(T, min, max)
+## Floats
 
-Float with range and utilities.
+`z.float(T, .{})` produces `f16`, `f32`, `f64`, `f80` or `f128`.
+
+| Option | Type | Default | Failure |
+| --- | --- | --- | --- |
+| `min` | `?comptime_float` | `null` | `E002` |
+| `max` | `?comptime_float` | `null` | `E003` |
+| `finite` | `bool` | `true` | `E017` |
+| `description` | `[]const u8` | `""` | none |
+
+`NaN` and infinities are rejected unless `.finite = false`. Encoding a
+non-finite value returns `error.Unsupported`.
+
+## Numeric presets
 
 ```zig
-const f = try z.Float(f64, -100.0, 100.0).init(3.7);
-f.floor() // 3.0
-f.ceil()  // 4.0
-f.round() // 4.0
-f.trunc() // 3.0
+z.positiveInt(u16, .{});
+z.nonNegativeInt(i64, .{});
+z.percentage(f32, .{});
+z.probability(f64, .{});
 ```
 
-### Specialized Number Types
-
-| Type                     | Description                 |
-| ------------------------ | --------------------------- |
-| `UInt(T, min, max)`      | Unsigned integer            |
-| `PositiveInt(T)`         | > 0                         |
-| `NonNegativeInt(T)`      | >= 0                        |
-| `NegativeInt(T)`         | < 0                         |
-| `EvenInt(T, min, max)`   | Even numbers only           |
-| `OddInt(T, min, max)`    | Odd numbers only            |
-| `MultipleOf(T, divisor)` | Must be multiple of divisor |
-| `Percentage(T)`          | 0-100 range                 |
-| `Probability(T)`         | 0-1 range                   |
-| `PositiveFloat(T)`       | > 0                         |
-| `NegativeFloat(T)`       | < 0                         |
-| `FiniteFloat(T)`         | No NaN or Infinity          |
-
-## Format Types
-
-### z.Email
-
-Email with domain parsing.
+Each preset accepts the normal integer or float config, so metadata and extra
+constraints compose:
 
 ```zig
-const email = try z.Email.init("user@company.com");
-email.domain()          // "company.com"
-email.localPart()       // "user"
-email.isBusinessEmail() // true (not gmail/yahoo/etc)
+const Ratio = z.probability(f64, .{ .description = "success ratio" });
 ```
 
-### z.Url
+`positiveInt` keeps `min` at least `1`, `nonNegativeInt` keeps it at least `0`,
+`percentage` bounds to `0..100` and `probability` bounds to `0..1`.
 
-URL with parsing utilities.
+## Booleans, enums, literals and null
 
 ```zig
-const url = try z.Url.init("https://example.com/path");
-url.isHttps()  // true
-url.protocol() // "https"
-url.host()     // "example.com"
+z.boolean(.{ .description = "feature flag" });
+z.enumType(Role, .{});          // Role is a Zig enum
+z.literal("created");           // exact string
+z.literal(200);                 // exact integer
+z.literal(true);                // exact boolean
+z.nullValue(.{});               // void, matches JSON null
 ```
 
-### z.Ipv4
-
-IPv4 with network utilities.
-
-```zig
-const ip = try z.Ipv4.init("192.168.1.1");
-ip.isPrivate()  // true
-ip.isLoopback() // false
-```
-
-### z.CreditCard
-
-Credit card with Luhn validation.
-
-```zig
-const card = try z.CreditCard.init("4111111111111111");
-card.cardType() // "visa", "mastercard", "amex"
-card.masked()   // last 4 digits
-```
-
-### Other Format Types
-
-| Type             | Description                   |
-| ---------------- | ----------------------------- |
-| `HttpsUrl`       | HTTPS only                    |
-| `Uuid`           | UUID with `version()` method  |
-| `Ipv6`           | IPv6 with `isLoopback()`      |
-| `Slug`           | URL-friendly string           |
-| `Semver`         | Semantic version              |
-| `PhoneNumber`    | Phone with `hasCountryCode()` |
-| `Regex(pattern)` | Pattern matching              |
-| `Base64`         | Base64-encoded string         |
-| `Base58`         | Base58 (crypto addresses)     |
-| `HexString`      | Hexadecimal string            |
-| `HexColor`       | Hex color code                |
-| `HslColor`       | HSL color string              |
-| `MacAddress`     | MAC address                   |
-| `IsoDateTime`    | ISO 8601 datetime             |
-| `IsoDate`        | ISO 8601 date                 |
-| `Duration`       | ISO 8601 duration             |
-| `CronExpression` | Cron schedule                 |
-| `Iban`           | International Bank Account    |
-| `Isbn10`         | ISBN-10 with checksum         |
-| `Isbn13`         | ISBN-13 with checksum         |
-| `CountryCode`    | ISO country code              |
-| `CurrencyCode`   | ISO currency code             |
-| `Latitude`       | Latitude coordinate           |
-| `Longitude`      | Longitude coordinate          |
-| `Port`           | TCP/UDP port number           |
-
-## Collection Types
-
-### z.List(T, min, max)
-
-List with length constraints.
-
-```zig
-const list = try z.List(u32, 1, 10).init(&items);
-list.len()        // item count
-list.isEmpty()    // false
-list.first()      // first item or null
-list.last()       // last item or null
-list.at(1)        // item at index or null
-list.contains(5)  // true if contains 5
-list.slice(0, 3)  // sub-slice
-list.sum()        // sum of all items
-list.all(fn)      // all match predicate
-list.any(fn)      // any match predicate
-list.findIndex(fn) // index of first match
-```
-
-### z.FixedList(T, exact_len)
-
-Exact size array.
-
-```zig
-const fixed = try z.FixedList(i32, 3).init(&[_]i32{1, 2, 3});
-fixed.at(0) // 1
-```
-
-## Special Types
-
-### z.Default(T, value)
-
-Default value for missing fields.
-
-```zig
-const Role = z.Default([]const u8, "user");
-Role.initDefault()       // { value: "user" }
-Role.getOrDefault(null)  // "user"
-role.isDefault()         // true/false
-```
-
-### z.OneOf(T, allowed)
-
-Value must be in allowed list.
-
-```zig
-const Status = z.OneOf(u8, &[_]u8{ 1, 2, 3 });
-const s = try Status.init(1);
-s.isFirst() // true
-s.isLast()  // false
-```
-
-### z.Range(T, start, end, step)
-
-Range with step validation.
-
-```zig
-const R = z.Range(i32, 0, 100, 10);
-_ = try R.init(50);  // OK
-// R.init(55) -> NotInStep error
-```
-
-### z.Nullable(T)
-
-Explicit null handling.
-
-```zig
-const N = z.Nullable(i32);
-N.init(42)      // some
-N.initNull()    // none
-n.isNull()      // check
-n.unwrapOr(0)   // get or default
-```
-
-### Other Special Types
-
-| Type                | Description               |
-| ------------------- | ------------------------- |
-| `Custom(T, fn)`     | Custom validator function |
-| `Transform(T, fn)`  | Transform value           |
-| `Coerce(From, To)`  | Type conversion           |
-| `Literal(T, value)` | Exact value match         |
-| `Partial(T)`        | All fields optional       |
-| `Lazy(T)`           | Lazy evaluation           |
+- `z.boolean` accepts JSON booleans; with `.coerce = true` it also accepts the
+  strings `"true"`, `"false"`, `"1"`, `"0"` and the integers `1` and `0`.
+- `z.enumType` matches enum member names exactly and reports `E010`.
+- `z.literal` reports `E011` with the literal as the expected value.
+- `z.nullValue` produces `void` and reports `E001` for any non-null value.

@@ -1,266 +1,111 @@
-# JSON Parsing
-
-Parse and serialize JSON with validation.
-
-## Parsing JSON
-
-```zig
-const z = @import("zigantic");
-
-const User = struct {
-    name: z.String(1, 50),
-    age: z.Int(i32, 18, 120),
-    email: z.Email,
-    role: z.Default([]const u8, "user"),
-    website: ?z.Url = null,
-};
-
-const json =
-    \\{"name": "Alice", "age": 25, "email": "alice@example.com"}
-;
-
-var result = try z.fromJson(User, json, allocator);
-defer result.deinit();
-
-if (result.value) |user| {
-    std.debug.print("Name: {s}\n", .{user.name.get()});
-    std.debug.print("Role: {s}\n", .{user.role.get()}); // "user" (default)
-}
-```
-
-## Error Handling
-
-```zig
-if (!result.isValid()) {
-    std.debug.print("Errors ({d}):\n", .{result.error_list.count()});
-
-    for (result.error_list.errors.items) |err| {
-        std.debug.print("  {s}: {s}\n", .{err.field, err.message});
-    }
-
-    // Or as JSON
-    const json_errors = try result.error_list.toJsonArray(allocator);
-    defer allocator.free(json_errors);
-}
-```
-
-## Serialization
-
-```zig
-// Compact JSON
-const compact = try z.toJson(value, allocator);
-defer allocator.free(compact);
-// {"name":"Alice","age":25}
-
-// Pretty JSON
-const pretty = try z.toJsonPretty(value, allocator);
-defer allocator.free(pretty);
-// {
-//   "name": "Alice",
-//   "age": 25
-// }
-```
-
-## Nested Structs
-
-```zig
-const Address = struct {
-    street: []const u8,
-    city: []const u8,
-    zip: z.String(5, 10),
-};
-
-const Person = struct {
-    name: z.String(1, 50),
-    address: Address,
-};
-
-const json =
-    \\{"name": "Bob", "address": {"street": "123 Main", "city": "NYC", "zip": "10001"}}
-;
-
-var result = try z.fromJson(Person, json, allocator);
-defer result.deinit();
-
-if (result.value) |person| {
-    std.debug.print("City: {s}\n", .{person.address.city});
-}
-```
-
-## Optional Fields
-
-```zig
-const Profile = struct {
-    name: z.String(1, 50),
-    bio: ?z.String(1, 500) = null,      // Optional string
-    website: ?z.Url = null,              // Optional URL
-    role: z.Default([]const u8, "user"), // Default value
-};
-```
-
-## Arrays
-
-```zig
-const Post = struct {
-    title: z.String(1, 100),
-    tags: z.List([]const u8, 1, 10),
-};
-
-const json =
-    \\{"title": "Hello", "tags": ["zig", "zigantic"]}
-;
-```
-
-## Validated Arrays
-
-```zig
-const Config = struct {
-    ports: z.List(u16, 1, 5),           // 1-5 ports
-    hosts: z.NonEmptyList([]const u8, 10), // At least 1
-};
-```
-
-## Partial Updates
-
-```zig
-const User = struct { name: []const u8, age: i32 };
-const PartialUser = z.Partial(User);
-
-// All fields optional
-const update = PartialUser{ .name = "New Name" };
-// update.age is null
-```
-
+---
+title: JSON, Query & Forms
+description: Parse and serialize JSON, URL query strings and form bodies with zigantic, including coercion, defaults and ownership.
+keywords: zigantic json parsing, query string parsing, form body, urlencoded, json stringify, allocator ownership
 ---
 
-## URL Query String & Form URL-Encoded Parsing
+# JSON, Query and Forms
 
-Use `z.fromQueryString` and `z.toQueryString` to seamlessly validate and parse/serialize URL query strings and form payload parameters.
+All services take the allocator and a trailing `.{}` options value.
+
+## JSON
 
 ```zig
-const std = @import("std");
-const z = @import("zigantic");
-
-const Search = struct {
-    query: z.String(1, 50),
-    page: z.Default(u32, 1),
-    active: bool,
-};
-
-const qs = "query=Mechanical+Keyboard&page=2&active=true";
-var result = try z.fromQueryString(Search, qs, allocator);
+var result = try z.parse(UserSchema, allocator, input, .{});
 defer result.deinit();
 
-if (result.isValid()) {
-    const s = result.value.?;
-    // s.query.get() == "Mechanical Keyboard"
-    // s.page.get() == 2
+if (result.ok()) {
+    const text = try z.stringify(UserSchema, allocator, result.value.?, .{});
+    defer allocator.free(text);
 }
 ```
 
----
+`parse` validates JSON syntax first (`error.InvalidJson`), then runs the schema.
+Schema failures are issues, not errors. Decoded strings, arrays, records and
+lazy nodes belong to the result arena, which `deinit` releases. The input is not
+referenced afterwards.
 
-## Compile-Time Field Aliases & Naming Policies
-
-Map custom aliases or use automatic naming policies completely at compile time with zero runtime cost.
-
-### Automatic Naming Policies
-
-Set `pub const zigantic_naming = NamingPolicy.snake_case` in a struct to map your idiomatic camelCase fields to standard external formats like `snake_case` or `kebab-case` symmetrically.
+Options are the same for every entry point:
 
 ```zig
-const User = struct {
-    firstName: []const u8,
-    lastName: []const u8,
-
-    // Automatically maps firstName -> first_name, lastName -> last_name
-    pub const zigantic_naming = z.utils.NamingPolicy.snake_case;
-};
+var result = try z.parse(UserSchema, allocator, input, .{
+    .messages = .{ .missing_field = "field is required" },
+    .unknown_fields = .strip,
+    .duplicates = .reject,
+    .max_depth = 64,
+});
 ```
 
-### Explicit Field Aliases
+`.duplicates` decides what happens when a JSON object repeats a key: `.reject`
+(the default) reports `E009` at the exact nested path, `.first` keeps the first
+occurrence and `.last` keeps the last. The duplicate scan happens before
+decoding, so `{"a":{"b":1,"b":2}}` reports `$.a.b`. `.coerce` additionally
+accepts strings for numbers, booleans and null in JSON documents; query
+transports always enable it.
 
-Set `pub const zigantic_aliases` to specify exact individual key renames. This takes precedence over naming policies.
+## Query strings and forms
 
 ```zig
-const Product = struct {
-    productName: []const u8,
-    priceInUsd: f64,
+var query = try z.parseQuery(SearchSchema, allocator, "q=zig&page=2&tag=a&tag=b", .{});
+defer query.deinit();
 
-    pub const zigantic_aliases = .{
-        .productName = "name",
-        .priceInUsd = "price",
-    };
-};
+const encoded = try z.stringifyQuery(SearchSchema, allocator, query.value.?, .{});
+defer allocator.free(encoded);
 ```
 
----
+Query values are text, so the decoder enables coercion for numbers and booleans.
+Repeated keys become arrays. `parseForm` uses the same encoding. Serialization
+supports nested objects, records, tuples, arrays, intersections, lazy nodes and
+scalar leaves; pass `.emit_nulls = true` to write a literal `null` for empty
+optional fields. Transforms without a query representation, unions and custom
+values return `error.Unsupported` instead of emitting incomplete text.
 
-## Advanced Features
-
-zigantic includes advanced validation decorators and dynamic factories.
-
-### Dynamic Default Factories (`DefaultFactory`)
-
-While `Default` is used for compile-time constant default values, `DefaultFactory` is used to dynamically generate default values at parsing/deserialization time (e.g. unique IDs or dynamic timestamps).
+Nested keys use bracket notation. The same syntax is accepted by `parseQuery`
+and `parseForm`:
 
 ```zig
-const std = @import("std");
-const z = @import("zigantic");
+var query = try z.parseQuery(UserSchema, allocator,
+    "name=Ada&address[city]=London&tags=fast&tags=safe", .{});
+defer query.deinit();
 
-var call_counter: i32 = 0;
-fn nextId() i32 {
-    call_counter += 1;
-    return call_counter;
+const encoded = try z.stringifyQuery(UserSchema, allocator, query.value.?, .{});
+defer allocator.free(encoded);
+// name=Ada&address%5Bcity%5D=London&tags=fast&tags=safe
+```
+
+Numeric segments address array elements (`items[0][name]=Ada`), and dots are
+accepted as separators (`address.city=London`). A trailing `[]` is optional for
+repeated keys. Bracket characters in a literal record key are percent-encoded
+by serialization; keep record keys free of `[`, `]` and `.` when they must round
+trip through query strings.
+
+Repeated keys are the query encoding for arrays, so they are not affected by
+`Options.duplicates`. A key with one value still produces a one-element array
+for an array field.
+
+## JSON Schema
+
+```zig
+const schema_text = try z.jsonSchema(UserSchema, allocator, .{});
+defer allocator.free(schema_text);
+```
+
+Generated documents describe types, bounds, formats, required fields and
+`additionalProperties`. Recursive schemas emit deduplicated `$defs` entries and
+`$ref` links. Custom schemas have no external representation, so generation
+returns `error.Unsupported` rather than claiming they accept everything. See
+[JSON Schema](/guide/json-schema) for the full mapping.
+
+## Typed validation
+
+```zig
+var issues = try z.validate(UserSchema, allocator, user, .{});
+defer issues.deinit();
+if (!issues.isEmpty()) {
+    const text = try issues.render(allocator, .{});
+    defer allocator.free(text);
 }
-
-const Device = struct {
-    name: []const u8,
-    id: z.DefaultFactory(i32, nextId),
-};
-
-// If "id" is missing in JSON, nextId() is automatically called to supply the value.
 ```
 
-### Field-Level Validators (`validate_[field_name]`)
-
-Structs can define field-level validator functions that run automatically when parsing a field from JSON or URL Query maps. A field-level validator:
-- Must have the name `validate_[field_name]` (e.g. `validate_age`).
-- Receives the parsed field value.
-- Returns either a validated/modified value or a Zig validation error.
-
-```zig
-const User = struct {
-    username: z.String(3, 50),
-    age: i32,
-
-    pub fn validate_age(val: i32) !i32 {
-        if (val < 18) return error.AgeTooYoung;
-        // Normalizes age to a maximum of 100
-        if (val > 100) return 100;
-        return val;
-    }
-};
-```
-
-### Model-Level Validation (`validateModel`)
-
-Structs can define a model-level validator function that runs automatically after all struct fields have been parsed and individually validated. It is extremely useful for verifying cross-field constraints (e.g. checking if password fields match or if a date range is valid).
-
-- Must have the name `validateModel`.
-- Can accept a pointer receiver (`self: *const @This()`) or a value receiver (`self: @This()`).
-- Returns either `void` or a Zig validation error.
-
-```zig
-const DateRange = struct {
-    start_date: z.IsoDate,
-    end_date: z.IsoDate,
-
-    pub fn validateModel(self: *const @This()) !void {
-        // Run cross-field checks
-        // (Ensure start_date is before end_date)
-    }
-};
-```
-
-
+`validate` runs the same constraints against a value that is already typed and
+returns the owning issue list directly. No session object is needed.

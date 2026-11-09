@@ -1,150 +1,46 @@
+---
+title: Installation
+description: Install zigantic 0.0.4 with zig fetch from the release tarball or the nightly Git URL, and wire the module into build.zig.
+keywords: zigantic install, zig fetch, zig build.zig, zig package, zig 0.17 dependency
+---
+
 # Installation
 
-This guide covers all the ways to install zigantic in your Zig project.
+Requires Zig **0.17.0** or newer.
 
-## Requirements
-
-- **Zig 0.16.0** or later
-
-## Release Installation (Recommended)
-
-Install the latest stable release for zig 0.16+ (use v0.0.3 or newer):
+## Release installation (recommended)
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.3.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.4.tar.gz
 ```
 
-This downloads the package and adds it to your `build.zig.zon`.
-
-## Nightly Installation
-
-Install the latest development version from the main branch:
+## Nightly installation
 
 ```bash
 zig fetch --save git+https://github.com/muhammad-fiaz/zigantic.git
 ```
 
-> **Note:** Nightly builds may contain breaking changes or experimental features.
-
-## Configure build.zig
-
-After fetching, add zigantic to your `build.zig`:
+`zig fetch --save` records the dependency in `build.zig.zon`. Add the module to
+the artifact that uses it:
 
 ```zig
-const std = @import("std");
+const zigantic = b.dependency("zigantic", .{
+    .target = target,
+    .optimize = optimize,
+}).module("zigantic");
 
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
-    // Add zigantic dependency
-    const zigantic_dep = b.dependency("zigantic", .{
-        .target = target,
-        .optimize = optimize,
-    });
-
-    // Create your executable
-    const exe = b.addExecutable(.{
-        .name = "my-app",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    // Import zigantic module
-    exe.root_module.addImport("zigantic", zigantic_dep.module("zigantic"));
-
-    b.installArtifact(exe);
-}
+exe.root_module.addImport("zigantic", zigantic);
 ```
 
-## Verify Installation
+The dependency graph includes `tint` for optional colour rendering; `zig` resolves
+it from the package manifest. No system libraries or build-time code generation
+are required.
 
-Create a test file `src/main.zig`:
-
-```zig
-const std = @import("std");
-const z = @import("zigantic");
-
-pub fn main() !void {
-    const email = try z.Email.init("test@example.com");
-    std.debug.print("Installed successfully! Email domain: {s}\n", .{email.domain()});
-    std.debug.print("zigantic version: {s}\n", .{z.getVersion()});
-}
-```
-
-Run it:
+## Local development
 
 ```bash
-zig build run
+zig build test              # unit and integration tests
+zig build run-all-examples  # all examples in examples/
+zig build bench             # ReleaseFast benchmark
+zig build docs              # native Zig API docs in zig-out/docs/api
 ```
-
-You should see:
-
-```
-Installed successfully! Email domain: example.com
-zigantic version: 0.0.3
-```
-
-## Using Prebuilt Libraries
-
-If you prefer to use prebuilt static libraries instead of building from source:
-
-1. Download the library for your platform from the [releases page](https://github.com/muhammad-fiaz/zigantic/releases)
-2. Place it in your project (e.g., in a `libs/` folder)
-3. Link it in your `build.zig`:
-
-```zig
-exe.addLibraryPath(b.path("libs"));
-exe.linkSystemLibrary("zigantic");
-```
-
-### Available Platforms
-
-| Platform | File |
-|----------|------|
-| Windows x86_64 | `zigantic-x86_64-windows.lib` |
-| Windows x86 | `zigantic-x86-windows.lib` |
-| Linux x86_64 | `libzigantic-x86_64-linux.a` |
-| Linux x86 | `libzigantic-x86-linux.a` |
-| Linux aarch64 | `libzigantic-aarch64-linux.a` |
-| macOS x86_64 | `libzigantic-x86_64-macos.a` |
-| macOS aarch64 | `libzigantic-aarch64-macos.a` |
-
-## Disabling Auto-Update Check
-
-By default, zigantic checks for updates in the background on first use. To disable this:
-
-```zig
-const z = @import("zigantic");
-
-pub fn main() !void {
-    // Disable update checking before using any other functions
-    z.disableUpdateCheck();
-    
-    // Now use the library normally...
-}
-```
-
-## Troubleshooting
-
-### Package Not Found
-
-If you get an error about the package not being found:
-
-1. Make sure you ran `zig fetch --save` successfully
-2. Check that `build.zig.zon` contains the zigantic dependency
-3. Verify the hash in `build.zig.zon` matches the package
-
-### Build Errors
-
-If you encounter build errors:
-
-1. Ensure you're using Zig 0.16.0 or later: `zig version`
-2. Try deleting `.zig-cache` and rebuilding
-3. Check the [issues page](https://github.com/muhammad-fiaz/zigantic/issues) for known problems
-
-## Next Steps
-
-- [Getting Started](/guide/getting-started) - Create your first validation
-- [Quick Start](/guide/quick-start) - Jump into examples

@@ -2,72 +2,84 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.0.3+    | :white_check_mark: |
+| Version | Supported |
+| ------- | --------- |
+| >= 0.0.4 | :white_check_mark: |
+| < 0.0.4  | :x: |
 
 ## Reporting a Vulnerability
 
-We take security vulnerabilities seriously. If you discover a security vulnerability within zigantic, please follow these steps:
+Do **not** open a public issue for a security vulnerability.
 
-### 1. Do NOT Create a Public Issue
+Report privately through
+[GitHub Security Advisories](https://github.com/muhammad-fiaz/zigantic/security/advisories/new).
+Include:
 
-Please **do not** open a public GitHub issue for security vulnerabilities. This helps protect users while we work on a fix.
+- the affected version and Zig version;
+- a minimal reproducer or schema and input;
+- the observed impact (crash, leak, incorrect acceptance, denial of service);
+- any suggested fix.
 
-### 2. Report Privately
-
-Send a detailed report to:
-
-- **Email**: [Create a private security advisory](https://github.com/muhammad-fiaz/zigantic/security/advisories/new)
-- **GitHub Security Advisories**: Use the "Report a vulnerability" button on the Security tab
-
-### 3. Include Details
-
-Please include the following information in your report:
-
-- Description of the vulnerability
-- Steps to reproduce the issue
-- Potential impact
-- Suggested fix (if any)
-- Your name/handle for credit (optional)
-
-### 4. What to Expect
-
-- **Acknowledgment**: We will acknowledge receipt within 48 hours
-- **Assessment**: We will assess the vulnerability and determine its severity
-- **Updates**: We will keep you informed of our progress
-- **Fix**: We will work on a fix and coordinate a release
-- **Credit**: With your permission, we will credit you in the release notes
+You will receive an acknowledgement, an assessment, and progress updates. Credit
+is given with your permission after a fix is released.
 
 ## Scope
 
-This security policy applies to:
+In scope:
 
-- The zigantic library (`src/` directory)
-- Official examples (`examples/` directory)
-- Build scripts (`build.zig`, `build.zig.zon`)
+- the library in `src/`;
+- the examples in `examples/` and the benchmark in `bench/`;
+- build scripts and package metadata.
 
-## Out of Scope
+Out of scope:
 
-- Third-party dependencies
-- User applications built with zigantic
-- Documentation website infrastructure
+- third-party dependencies, including `tint` and the Zig standard library;
+- applications built with zigantic;
+- the VitePress documentation site.
 
-## Security Best Practices
+## Security Properties
 
-When using zigantic, we recommend:
+zigantic is an input-validation library. It does not perform authentication,
+authorization, encryption, or network I/O.
 
-1. **Keep Updated**: Use the latest version of zigantic
-2. **Validate All Input**: Never trust user input
-3. **Handle Errors**: Always handle validation errors appropriately
-4. **Use Secret Types**: Use `z.Secret` for sensitive data like passwords
+- **Explicit allocation.** Every allocation comes from an allocator supplied by
+  the caller. Parsed values live in the result arena and are released by
+  `deinit`; there is no global allocator, hidden arena, or background task.
+- **Bounded recursion.** `Options.max_depth` limits object, array and lazy
+  recursion during decoding, so hostile nesting is reported instead of
+  exhausting the stack.
+- **Duplicate keys.** `Options.duplicates = .reject` scans the complete document
+  before decoding and reports `E009` at the exact nested path. `.first` and
+  `.last` are explicit opt-ins.
+- **No permissive fallbacks.** A schema that cannot encode or describe itself
+  returns `error.Unsupported`; it never silently serializes incomplete data.
+- **Input is copied.** Decoded strings and records are copied into the result
+  arena. The input buffer does not outlive the call and may be reused
+  immediately.
+- **Format checks are structural.** Email, URL, UUID, IP, JWT, card and
+  date/time predicates are allocation-free and do not trust prefixes or
+  substrings alone.
 
-## Automatic Update Checking
+## Operational Guidance
 
-zigantic includes automatic update checking to help you stay current with security patches. This feature:
+1. Treat validation as one layer. Enforce transport limits, authentication,
+   authorization, and rate limits in the application.
+2. Do not use a permissive `unknown_fields = .strip` policy to hide schema
+   drift; log rejected fields instead.
+3. Keep `.duplicates = .reject` unless the upstream producer is trusted to send
+   unique keys.
+4. Do not put secrets in schemas, error messages, or JSON Schema descriptions;
+   generated schemas are intended to be public documentation.
+5. Free every `ParseResult` and every `IssueList` with `deinit`. Reusing a
+   result after `deinit` is undefined behaviour.
+6. Validate dates and times before converting them to timestamps; the library
+   rejects invalid calendar dates but does not model time-zone database rules.
 
-- Runs in the background on first JSON function use
-- Notifies you of available updates
-- Can be disabled with `z.disableUpdateCheck()` if needed
+## Dependency and Build Integrity
 
-Thank you for helping keep zigantic and its users safe!
+CI builds and tests the package on Linux, Windows, and macOS with Zig 0.17.0,
+including cross-compiled targets. The repository contains no generated code,
+install scripts, or network calls at build time. `zig build docs`, `zig build
+bench`, and `zig build run-all-examples` run locally and require no credentials.
+
+Thank you for helping keep zigantic and its users safe.

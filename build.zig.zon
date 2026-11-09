@@ -1,10 +1,17 @@
 .{
     .name = .zigantic,
-    .version = "0.0.3",
+    .version = "0.0.4",
     .fingerprint = 0x1fba9aa888c5185b,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .tint = .{
+            .url = "https://github.com/muhammad-fiaz/tint.zig/archive/refs/tags/0.0.2.tar.gz",
+            .hash = "tint-0.0.2-UOf2-TBCAwDT7f7OwJbI3YhvbKCI9fO_UPlpYb0nPLMF",
+        },
+    },
     .paths = .{
         "src",
+        "examples",
         "build.zig",
         "build.zig.zon",
         "README.md",

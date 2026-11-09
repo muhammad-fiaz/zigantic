@@ -1,1537 +1,346 @@
-//! JSON serialization and deserialization for zigantic.
+//! JSON decoding and encoding built on `std.json`.
 //!
-//! This module provides the core fromJson and toJson functionality,
-//! using compile-time introspection to validate and parse JSON into
-//! Zig structs with zigantic validation types.
+//! Input is parsed by the standard library into a `std.json.Value` tree; schemas
+//! then validate and copy that tree into a per-result arena. The JSON tree
+//! itself lives in a short-lived arena that is released before `parse` returns,
+//! so every decoded string is owned by the result.
 
 const std = @import("std");
-const types = @import("types.zig");
-const errors = @import("errors.zig");
-const utils = @import("utils.zig");
+const schema = @import("schema.zig");
 
-/// Result of a JSON parsing operation.
-///
-/// Contains either the parsed value or a list of validation errors.
-pub fn ParseResult(comptime T: type) type {
+pub const Error = error{ InvalidJson, OutOfMemory };
+
+pub fn Result(comptime S: type) type {
     return struct {
         const Self = @This();
 
-        /// The parsed and validated value (null if validation failed).
-        value: ?T,
-        /// List of validation errors (empty if parsing succeeded).
-        error_list: errors.ErrorList,
-        /// Allocator used for memory management.
-        allocator: std.mem.Allocator,
-        /// Arena for allocated data within the parsed value.
-        arena: std.heap.ArenaAllocator,
+        arena: *std.heap.ArenaAllocator,
+        child_allocator: std.mem.Allocator,
+        issues: schema.IssueList,
+        value: ?S.Value,
 
-        /// Check if parsing was successful.
-        pub fn isValid(self: Self) bool {
-            return self.value != null and !self.error_list.hasErrors();
-        }
-
-        /// Get the value or return an error.
-        pub fn unwrap(self: Self) !T {
-            if (self.value) |v| {
-                return v;
-            }
-            return error.ValidationFailed;
-        }
-
-        /// Free all allocated memory.
         pub fn deinit(self: *Self) void {
-            self.error_list.deinit();
+            const child = self.child_allocator;
+            self.issues.deinit();
             self.arena.deinit();
+            child.destroy(self.arena);
+            self.* = undefined;
         }
 
-        /// Get formatted error messages.
-        pub fn formatErrors(self: Self) ![]const u8 {
-            return self.error_list.formatAll(self.allocator);
+        pub fn ok(self: *const Self) bool {
+            return self.value != null;
+        }
+
+        /// Borrowed issues; valid until `deinit`.
+        pub fn errors(self: *Self) *schema.IssueList {
+            return &self.issues;
         }
     };
 }
 
-/// Parse JSON string into a validated struct.
-pub fn fromJson(comptime T: type, json_string: []const u8, allocator: std.mem.Allocator) !ParseResult(T) {
-    var result = ParseResult(T){
+pub fn newResult(comptime S: type, allocator: std.mem.Allocator) !Result(S) {
+    const arena = try allocator.create(std.heap.ArenaAllocator);
+    errdefer allocator.destroy(arena);
+    arena.* = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+
+    var issues = try schema.IssueList.init(allocator, .{});
+    errdefer issues.deinit();
+
+    return .{
+        .arena = arena,
+        .child_allocator = allocator,
+        .issues = issues,
         .value = null,
-        .error_list = errors.ErrorList.init(allocator),
-        .allocator = allocator,
-        .arena = std.heap.ArenaAllocator.init(allocator),
     };
+}
+
+pub fn parse(comptime S: type, allocator: std.mem.Allocator, input: []const u8, options: schema.Options) Error!Result(S) {
+    var result = try newResult(S, allocator);
     errdefer result.deinit();
 
-    const arena_alloc = result.arena.allocator();
+    var json_arena = std.heap.ArenaAllocator.init(allocator);
+    defer json_arena.deinit();
 
-    // Parse the JSON
-    const parsed = std.json.parseFromSlice(std.json.Value, arena_alloc, json_string, .{}) catch {
-        try result.error_list.add("", errors.ValidationError.InvalidJson, "Invalid JSON syntax", null);
-        return result;
+    const parse_options: std.json.ParseOptions = .{
+        .duplicate_field_behavior = switch (options.duplicates) {
+            // Validate syntax with first-wins so duplicates can be reported at
+            // their exact path by the scanner below.
+            .reject => .use_first,
+            .first => .use_first,
+            .last => .use_last,
+        },
     };
-
-    // Validate and convert to the target type
-    result.value = parseValue(T, parsed.value, arena_alloc, &result.error_list, "") catch |err| {
-        if (err == error.OutOfMemory) return err;
-        return result;
+    var parsed = std.json.parseFromSlice(std.json.Value, json_arena.allocator(), input, parse_options) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.DuplicateField => {
+            try result.issues.addCode(.duplicate_field, "$", "unique keys", null);
+            if (options.hooks.on_start) |hook| hook(S.schema_name);
+            if (options.hooks.on_finish) |hook| hook(false, result.issues.count());
+            return result;
+        },
+        else => return error.InvalidJson,
     };
+    defer parsed.deinit();
 
+    if (options.duplicates == .reject) {
+        if (try findDuplicate(result.arena.allocator(), input)) |path| {
+            try result.issues.addCode(.duplicate_field, path, "unique keys", null);
+            if (options.hooks.on_start) |hook| hook(S.schema_name);
+            if (options.hooks.on_finish) |hook| hook(false, result.issues.count());
+            return result;
+        }
+    }
+
+    var state = schema.State{
+        .arena = result.arena.allocator(),
+        .issues = &result.issues,
+        .options = options,
+    };
+    if (options.hooks.on_start) |hook| hook(S.schema_name);
+    result.value = S.decode(&state, parsed.value, "$") catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Reported => null,
+    };
+    if (options.hooks.on_finish) |hook| hook(result.value != null, result.issues.count());
     return result;
 }
 
-/// Parse a JSON value into the target type with validation.
-fn parseValue(
-    comptime T: type,
-    json_value: std.json.Value,
+const DuplicateScanner = struct {
+    input: []const u8,
+    index: usize = 0,
     allocator: std.mem.Allocator,
-    error_list: *errors.ErrorList,
-    path: []const u8,
-) !?T {
-    const info = @typeInfo(T);
+    path: std.ArrayList(u8) = .empty,
+    keys: std.ArrayList([]const u8) = .empty,
 
-    // Handle optionals first
-    if (info == .optional) {
-        if (json_value == .null) {
+    fn skipSpace(self: *DuplicateScanner) void {
+        while (self.index < self.input.len and std.ascii.isWhitespace(self.input[self.index])) self.index += 1;
+    }
+
+    fn scanString(self: *DuplicateScanner, keep: bool) !?[]const u8 {
+        if (self.index >= self.input.len or self.input[self.index] != '"') return null;
+        const start = self.index;
+        self.index += 1;
+        while (self.index < self.input.len) {
+            switch (self.input[self.index]) {
+                '"' => {
+                    const end = self.index;
+                    self.index += 1;
+                    if (!keep) return null;
+                    const raw = self.input[start + 1 .. end];
+                    if (std.mem.indexOfScalar(u8, raw, '\\') == null) return raw;
+                    const quoted = self.input[start..self.index];
+                    const parsed = std.json.parseFromSlice([]const u8, self.allocator, quoted, .{}) catch return null;
+                    return parsed.value;
+                },
+                '\\' => {
+                    self.index += 2;
+                    if (self.index > self.input.len) return null;
+                },
+                else => self.index += 1,
+            }
+        }
+        return null;
+    }
+
+    fn scanNumber(self: *DuplicateScanner) void {
+        while (self.index < self.input.len) : (self.index += 1) {
+            const c = self.input[self.index];
+            if (std.ascii.isDigit(c) or c == '-' or c == '+' or c == '.' or c == 'e' or c == 'E') continue;
+            break;
+        }
+    }
+
+    fn scanValue(self: *DuplicateScanner) error{OutOfMemory}!?[]const u8 {
+        self.skipSpace();
+        if (self.index >= self.input.len) return null;
+        return switch (self.input[self.index]) {
+            '{' => self.scanObject(),
+            '[' => self.scanArray(),
+            '"' => blk: {
+                _ = try self.scanString(false);
+                break :blk null;
+            },
+            't' => blk: {
+                if (!std.mem.startsWith(u8, self.input[self.index..], "true")) return null;
+                self.index += 4;
+                break :blk null;
+            },
+            'f' => blk: {
+                if (!std.mem.startsWith(u8, self.input[self.index..], "false")) return null;
+                self.index += 5;
+                break :blk null;
+            },
+            'n' => blk: {
+                if (!std.mem.startsWith(u8, self.input[self.index..], "null")) return null;
+                self.index += 4;
+                break :blk null;
+            },
+            else => blk: {
+                self.scanNumber();
+                break :blk null;
+            },
+        };
+    }
+
+    fn scanArray(self: *DuplicateScanner) error{OutOfMemory}!?[]const u8 {
+        self.index += 1;
+        self.skipSpace();
+        if (self.index < self.input.len and self.input[self.index] == ']') {
+            self.index += 1;
             return null;
         }
-        const inner = try parseValue(info.optional.child, json_value, allocator, error_list, path);
-        return inner;
-    }
-
-    // Handle arrays/slices (must check before struct since slices can't have decls)
-    if (info == .pointer and info.pointer.size == .slice) {
-        return parseSlice(T, info.pointer.child, json_value, allocator, error_list, path);
-    }
-
-    // Handle primitives (int, float, bool)
-    if (info == .int or info == .float or info == .bool) {
-        return parsePrimitive(T, json_value, error_list, path);
-    }
-
-    // Handle structs - check for zigantic types
-    if (info == .@"struct") {
-        if (@hasDecl(T, "zigantic_type")) {
-            return parseZiganticType(T, json_value, allocator, error_list, path);
+        var item: usize = 0;
+        while (self.index < self.input.len) : (item += 1) {
+            const old_len = self.path.items.len;
+            const index_text = try std.fmt.allocPrint(self.allocator, "[{d}]", .{item});
+            try self.path.appendSlice(self.allocator, index_text);
+            if (try self.scanValue()) |duplicate| return duplicate;
+            self.path.shrinkRetainingCapacity(old_len);
+            self.skipSpace();
+            if (self.index >= self.input.len) return null;
+            if (self.input[self.index] == ',') {
+                self.index += 1;
+                continue;
+            }
+            if (self.input[self.index] == ']') {
+                self.index += 1;
+                return null;
+            }
+            return null;
         }
-        return parseStruct(T, json_value, allocator, error_list, path);
+        return null;
     }
 
-    // Unsupported type
-    try addError(error_list, path, errors.ValidationError.TypeMismatch, "unsupported type", null);
+    fn scanObject(self: *DuplicateScanner) error{OutOfMemory}!?[]const u8 {
+        self.index += 1;
+        const frame = self.keys.items.len;
+        defer self.keys.shrinkRetainingCapacity(frame);
+        self.skipSpace();
+        if (self.index < self.input.len and self.input[self.index] == '}') {
+            self.index += 1;
+            return null;
+        }
+        while (self.index < self.input.len) {
+            self.skipSpace();
+            const key = (try self.scanString(true)) orelse return null;
+            for (self.keys.items[frame..]) |existing| {
+                if (std.mem.eql(u8, existing, key)) {
+                    const old_len = self.path.items.len;
+                    try self.path.appendSlice(self.allocator, ".");
+                    try self.path.appendSlice(self.allocator, key);
+                    const duplicate = try self.allocator.dupe(u8, self.path.items);
+                    self.path.shrinkRetainingCapacity(old_len);
+                    return duplicate;
+                }
+            }
+            try self.keys.append(self.allocator, key);
+            self.skipSpace();
+            if (self.index >= self.input.len or self.input[self.index] != ':') return null;
+            self.index += 1;
+            const old_len = self.path.items.len;
+            try self.path.appendSlice(self.allocator, ".");
+            try self.path.appendSlice(self.allocator, key);
+            if (try self.scanValue()) |duplicate| return duplicate;
+            self.path.shrinkRetainingCapacity(old_len);
+            self.skipSpace();
+            if (self.index >= self.input.len) return null;
+            if (self.input[self.index] == ',') {
+                self.index += 1;
+                continue;
+            }
+            if (self.input[self.index] == '}') {
+                self.index += 1;
+                return null;
+            }
+            return null;
+        }
+        return null;
+    }
+};
+
+/// Scans raw JSON for the first repeated key inside the same object and returns
+/// its JSONPath. Malformed input returns null so the standard parser can report
+/// the syntax error with its own diagnostics.
+fn findDuplicate(allocator: std.mem.Allocator, input: []const u8) error{OutOfMemory}!?[]const u8 {
+    var scanner = DuplicateScanner{ .input = input, .allocator = allocator };
+    try scanner.path.append(allocator, '$');
+    const duplicate = try scanner.scanValue();
+    if (duplicate) |path| return path;
     return null;
 }
 
-/// Parse a zigantic validated type from JSON.
-fn parseZiganticType(
-    comptime T: type,
-    json_value: std.json.Value,
+pub const EncodeOptions = schema.EncodeOptions;
+
+pub fn stringify(
+    comptime S: type,
     allocator: std.mem.Allocator,
-    error_list: *errors.ErrorList,
-    path: []const u8,
-) !?T {
-    const zigantic_type = T.zigantic_type;
-
-    // String-based types
-    if (zigantic_type == .string or zigantic_type == .trimmed or zigantic_type == .lowercase or
-        zigantic_type == .uppercase or zigantic_type == .alphanumeric or zigantic_type == .ascii or
-        zigantic_type == .secret or zigantic_type == .strong_password)
-    {
-        const str = switch (json_value) {
-            .string => |s| s,
-            else => {
-                try addError(error_list, path, errors.ValidationError.TypeMismatch, "expected string", null);
-                return null;
-            },
-        };
-
-        return T.init(str) catch |err| {
-            try addValidationErr(T, error_list, path, err, str);
-            return null;
-        };
-    }
-
-    // Format types (all string-based)
-    if (zigantic_type == .email or zigantic_type == .url or zigantic_type == .https_url or
-        zigantic_type == .uuid or zigantic_type == .ipv4 or zigantic_type == .ipv6 or
-        zigantic_type == .slug or zigantic_type == .semver or zigantic_type == .phone or
-        zigantic_type == .credit_card or zigantic_type == .regex or zigantic_type == .base64 or
-        zigantic_type == .hex_string or zigantic_type == .hex_color or zigantic_type == .mac_address or
-        zigantic_type == .iso_datetime or zigantic_type == .iso_date or zigantic_type == .country_code or
-        zigantic_type == .currency_code)
-    {
-        const str = switch (json_value) {
-            .string => |s| s,
-            else => {
-                try addError(error_list, path, errors.ValidationError.TypeMismatch, "expected string", null);
-                return null;
-            },
-        };
-
-        return T.init(str) catch |err| {
-            try addValidationErr(T, error_list, path, err, str);
-            return null;
-        };
-    }
-
-    // Integer types (int, uint, even, odd, multiple, range, oneof, port)
-    if (zigantic_type == .int or zigantic_type == .uint or zigantic_type == .even or
-        zigantic_type == .odd or zigantic_type == .multiple or zigantic_type == .range or
-        zigantic_type == .oneof or zigantic_type == .port)
-    {
-        const val = switch (json_value) {
-            .integer => |i| i,
-            else => {
-                try addError(error_list, path, errors.ValidationError.InvalidInteger, "expected integer", null);
-                return null;
-            },
-        };
-
-        if (@hasDecl(T, "IntType")) {
-            const IntType = T.IntType;
-            const casted = std.math.cast(IntType, val) orelse {
-                try addError(error_list, path, errors.ValidationError.TooLarge, "integer out of range", null);
-                return null;
-            };
-
-            return T.init(casted) catch |err| {
-                var buf: [32]u8 = undefined;
-                const val_str = std.fmt.bufPrint(&buf, "{d}", .{val}) catch "?";
-                try addValidationErr(T, error_list, path, err, val_str);
-                return null;
-            };
-        } else {
-            // Port type uses u16
-            const casted = std.math.cast(u16, val) orelse {
-                try addError(error_list, path, errors.ValidationError.TooLarge, "integer out of range", null);
-                return null;
-            };
-
-            return T.init(casted) catch |err| {
-                try addValidationErr(T, error_list, path, err, null);
-                return null;
-            };
-        }
-    }
-
-    // Float types (float, percentage, probability, finite_float, latitude, longitude)
-    if (zigantic_type == .float or zigantic_type == .finite_float or
-        zigantic_type == .latitude or zigantic_type == .longitude)
-    {
-        const val: f64 = switch (json_value) {
-            .float => |f| f,
-            .integer => |i| @floatFromInt(i),
-            else => {
-                try addError(error_list, path, errors.ValidationError.InvalidNumber, "expected number", null);
-                return null;
-            },
-        };
-
-        if (@hasDecl(T, "FloatType")) {
-            const FloatType = T.FloatType;
-            const casted: FloatType = @floatCast(val);
-            return T.init(casted) catch |err| {
-                try addValidationErr(T, error_list, path, err, null);
-                return null;
-            };
-        } else {
-            // Latitude/Longitude use f64 directly
-            return T.init(val) catch |err| {
-                try addValidationErr(T, error_list, path, err, null);
-                return null;
-            };
-        }
-    }
-
-    // List type
-    if (zigantic_type == .list or zigantic_type == .fixed_list) {
-        const arr = switch (json_value) {
-            .array => |a| a,
-            else => {
-                try addError(error_list, path, errors.ValidationError.InvalidArray, "expected array", null);
-                return null;
-            },
-        };
-
-        const ItemType = T.ItemType;
-        var items = try allocator.alloc(ItemType, arr.items.len);
-        var valid_count: usize = 0;
-
-        for (arr.items, 0..) |item, i| {
-            var item_path_buf: [256]u8 = undefined;
-            const item_path = std.fmt.bufPrint(&item_path_buf, "{s}[{d}]", .{ path, i }) catch path;
-
-            if (try parseValue(ItemType, item, allocator, error_list, item_path)) |parsed| {
-                items[valid_count] = parsed;
-                valid_count += 1;
-            }
-        }
-
-        if (valid_count != arr.items.len) {
-            return null; // Some items failed validation
-        }
-
-        return T.init(items[0..valid_count]) catch |err| {
-            try addValidationErr(T, error_list, path, err, null);
-            return null;
-        };
-    }
-
-    // Default / DefaultFactory type
-    if (zigantic_type == .default or zigantic_type == .default_factory) {
-        const ValueType = T.ValueType;
-        if (json_value == .null) {
-            return T.initDefault();
-        }
-        const inner = try parseValue(ValueType, json_value, allocator, error_list, path) orelse return null;
-        return T.init(inner);
-    }
-
-    // Custom type
-    if (zigantic_type == .custom) {
-        const ValueType = T.ValueType;
-        const inner = try parseValue(ValueType, json_value, allocator, error_list, path) orelse return null;
-        return T.init(inner) catch |err| {
-            try addValidationErr(T, error_list, path, err, null);
-            return null;
-        };
-    }
-
-    // Transform type
-    if (zigantic_type == .transform) {
-        const ValueType = T.ValueType;
-        const inner = try parseValue(ValueType, json_value, allocator, error_list, path) orelse return null;
-        return T.init(inner);
-    }
-
-    // Coerce type
-    if (zigantic_type == .coerce) {
-        const FromType = T.FromType;
-        const inner = try parseValue(FromType, json_value, allocator, error_list, path) orelse return null;
-        return T.init(inner) catch |err| {
-            try addValidationErr(T, error_list, path, err, null);
-            return null;
-        };
-    }
-
-    // Literal type
-    if (zigantic_type == .literal) {
-        const ValueType = T.ValueType;
-        const inner = try parseValue(ValueType, json_value, allocator, error_list, path) orelse return null;
-        return T.init(inner) catch |err| {
-            try addValidationErr(T, error_list, path, err, null);
-            return null;
-        };
-    }
-
-    // Nullable type
-    if (zigantic_type == .nullable) {
-        if (json_value == .null) {
-            return T.initNull();
-        }
-        const InnerType = T.InnerType;
-        const inner = try parseValue(InnerType, json_value, allocator, error_list, path) orelse return null;
-        return T.init(inner);
-    }
-
-    // Fallback - try as string type with init method
-    if (@hasDecl(T, "init")) {
-        const str = switch (json_value) {
-            .string => |s| s,
-            else => {
-                try addError(error_list, path, errors.ValidationError.TypeMismatch, "expected string", null);
-                return null;
-            },
-        };
-
-        return T.init(str) catch |err| {
-            try addValidationErr(T, error_list, path, err, str);
-            return null;
-        };
-    }
-
-    // Unsupported zigantic type
-    @compileError("Unknown zigantic type");
+    value: S.Value,
+    options: EncodeOptions,
+) (std.mem.Allocator.Error || std.Io.Writer.Error || error{ Unsupported, TransformFailed })![]u8 {
+    var buffer: std.Io.Writer.Allocating = .init(allocator);
+    errdefer buffer.deinit();
+    var json: std.json.Stringify = .{ .writer = &buffer.writer, .options = .{} };
+    var state = schema.EncodeState{ .allocator = allocator, .json = &json, .options = options };
+    try S.encode(&state, value);
+    return buffer.toOwnedSlice();
 }
 
-/// Parse a struct from JSON.
-fn parseStruct(
-    comptime T: type,
-    json_value: std.json.Value,
-    allocator: std.mem.Allocator,
-    error_list: *errors.ErrorList,
-    path: []const u8,
-) !?T {
-    const obj = switch (json_value) {
-        .object => |o| o,
-        else => {
-            try addError(error_list, path, errors.ValidationError.InvalidObject, "expected object", null);
-            return null;
-        },
-    };
-
-    const info = @typeInfo(T).@"struct";
-    var result: T = undefined;
-    var has_errors = false;
-
-    inline for (info.fields) |field| {
-        // Build field path at runtime using a buffer
-        var field_path_buf: [512]u8 = undefined;
-        const field_path = if (path.len > 0)
-            std.fmt.bufPrint(&field_path_buf, "{s}.{s}", .{ path, field.name }) catch field.name
-        else
-            field.name;
-
-        const json_field_name = comptime utils.getFieldAlias(T, field.name);
-        const field_value = obj.get(field.name) orelse obj.get(json_field_name);
-
-        if (field_value) |fv| {
-            if (try parseValue(field.type, fv, allocator, error_list, field_path)) |parsed| {
-                var final_val = parsed;
-                const has_validator = comptime @hasDecl(T, "validate_" ++ field.name);
-                var field_ok = true;
-                if (comptime has_validator) {
-                    const validator_fn = @field(T, "validate_" ++ field.name);
-                    final_val = validator_fn(parsed) catch |err| blk: {
-                        try handleFieldValidatorErr(error_list, field_path, err);
-                        has_errors = true;
-                        field_ok = false;
-                        break :blk parsed;
-                    };
-                }
-                if (field_ok) {
-                    @field(result, field.name) = final_val;
-                }
-            } else {
-                has_errors = true;
-            }
-        } else {
-            // Field is missing from JSON
-            if (handleMissingField(T, field, &result)) |_| {
-                // Field was handled (has default or is optional)
-                var final_val = @field(result, field.name);
-                const has_validator = comptime @hasDecl(T, "validate_" ++ field.name);
-                var field_ok = true;
-                if (comptime has_validator) {
-                    const validator_fn = @field(T, "validate_" ++ field.name);
-                    final_val = validator_fn(final_val) catch |err| blk: {
-                        try handleFieldValidatorErr(error_list, field_path, err);
-                        has_errors = true;
-                        field_ok = false;
-                        break :blk @field(result, field.name);
-                    };
-                }
-                if (field_ok) {
-                    @field(result, field.name) = final_val;
-                }
-            } else |_| {
-                // Build error message at runtime
-                var msg_buf: [256]u8 = undefined;
-                const msg = std.fmt.bufPrint(&msg_buf, "{s} is required", .{field.name}) catch "field is required";
-                try addError(error_list, field_path, errors.ValidationError.MissingField, msg, null);
-                has_errors = true;
-            }
-        }
-    }
-
-    if (has_errors) {
-        return null;
-    }
-
-    if (!try runModelValidator(T, result, error_list, path)) return null;
-
-    return result;
-}
-
-/// Handle a missing field in a struct.
-fn handleMissingField(comptime T: type, comptime field: std.builtin.Type.StructField, result: *T) !void {
-    const FieldType = field.type;
-    const field_info = @typeInfo(FieldType);
-
-    // Check if it's an optional type
-    if (field_info == .optional) {
-        @field(result, field.name) = null;
-        return;
-    }
-
-    // Check if it's a zigantic Default or DefaultFactory type (must be a struct first)
-    if (field_info == .@"struct") {
-        if (@hasDecl(FieldType, "zigantic_type")) {
-            if (FieldType.zigantic_type == .default or FieldType.zigantic_type == .default_factory) {
-                @field(result, field.name) = FieldType.initDefault();
-                return;
-            }
-        }
-    }
-
-    // Check if struct has a default value
-    if (field.default_value_ptr) |ptr| {
-        const default: *const FieldType = @ptrCast(@alignCast(ptr));
-        @field(result, field.name) = default.*;
-        return;
-    }
-
-    return error.MissingField;
-}
-
-/// Parse a slice from JSON.
-fn parseSlice(
-    comptime SliceType: type,
-    comptime ItemType: type,
-    json_value: std.json.Value,
-    allocator: std.mem.Allocator,
-    error_list: *errors.ErrorList,
-    path: []const u8,
-) !?SliceType {
-    // Special case for []const u8 (strings)
-    if (ItemType == u8) {
-        const str = switch (json_value) {
-            .string => |s| s,
-            else => {
-                try addError(error_list, path, errors.ValidationError.TypeMismatch, "expected string", null);
-                return null;
-            },
-        };
-        return str;
-    }
-
-    // Regular array
-    const arr = switch (json_value) {
-        .array => |a| a,
-        else => {
-            try addError(error_list, path, errors.ValidationError.InvalidArray, "expected array", null);
-            return null;
-        },
-    };
-
-    var items = try allocator.alloc(ItemType, arr.items.len);
-    var valid_count: usize = 0;
-
-    for (arr.items, 0..) |item, i| {
-        var item_path_buf: [256]u8 = undefined;
-        const item_path = std.fmt.bufPrint(&item_path_buf, "{s}[{d}]", .{ path, i }) catch path;
-
-        if (try parseValue(ItemType, item, allocator, error_list, item_path)) |parsed| {
-            items[valid_count] = parsed;
-            valid_count += 1;
-        }
-    }
-
-    if (valid_count != arr.items.len) {
-        return null;
-    }
-
-    return items[0..valid_count];
-}
-
-/// Parse a primitive type from JSON.
-fn parsePrimitive(
-    comptime T: type,
-    json_value: std.json.Value,
-    error_list: *errors.ErrorList,
-    path: []const u8,
-) !?T {
-    const info = @typeInfo(T);
-
-    switch (info) {
-        .int => {
-            const val = switch (json_value) {
-                .integer => |i| i,
-                else => {
-                    try addError(error_list, path, errors.ValidationError.InvalidInteger, "expected integer", null);
-                    return null;
-                },
-            };
-            return std.math.cast(T, val) orelse {
-                try addError(error_list, path, errors.ValidationError.TooLarge, "integer out of range", null);
-                return null;
-            };
-        },
-        .float => {
-            const val: T = switch (json_value) {
-                .float => |f| @floatCast(f),
-                .integer => |i| @floatFromInt(i),
-                else => {
-                    try addError(error_list, path, errors.ValidationError.InvalidNumber, "expected number", null);
-                    return null;
-                },
-            };
-            return val;
-        },
-        .bool => {
-            return switch (json_value) {
-                .bool => |b| b,
-                else => {
-                    try addError(error_list, path, errors.ValidationError.InvalidBoolean, "expected boolean", null);
-                    return null;
-                },
-            };
-        },
-        else => {
-            try addError(error_list, path, errors.ValidationError.TypeMismatch, "unsupported type", null);
-            return null;
-        },
-    }
-}
-
-/// Add an error to the error list with proper path handling.
-fn addError(
-    error_list: *errors.ErrorList,
-    path: []const u8,
-    err: errors.ValidationError,
-    message: []const u8,
-    value: ?[]const u8,
-) !void {
-    const field_name = if (path.len > 0) path else "(root)";
-    try error_list.add(field_name, err, message, value);
-}
-
-/// Add a validation error with an auto-resolved message for a zigantic type.
-fn addValidationErr(comptime T: type, error_list: *errors.ErrorList, path: []const u8, err: errors.ValidationError, value: ?[]const u8) !void {
-    const msg = getValidationMessage(T, err);
-    try addError(error_list, path, err, msg, value);
-}
-
-/// Handle a field-level validator error (returns false if field should be skipped).
-fn handleFieldValidatorErr(error_list: *errors.ErrorList, field_path: []const u8, err: anyerror) !void {
-    var err_msg_buf: [256]u8 = undefined;
-    const err_msg = std.fmt.bufPrint(&err_msg_buf, "field validator failed: {s}", .{@errorName(err)}) catch "field validation failed";
-    try addError(error_list, field_path, errors.ValidationError.CustomValidationFailed, err_msg, null);
-}
-
-/// Run model-level validator if present. Returns true if validation passed.
-fn runModelValidator(comptime T: type, result: T, error_list: *errors.ErrorList, path: []const u8) !bool {
-    if (!comptime @hasDecl(T, "validateModel")) return true;
-    const validator_fn = @field(T, "validateModel");
-    const call_res = blk: {
-        const FnType = @TypeOf(validator_fn);
-        const params = @typeInfo(FnType).@"fn".params;
-        if (params.len > 0) {
-            const first_param_type = params[0].type.?;
-            if (first_param_type == T) {
-                break :blk validator_fn(result);
-            } else if (first_param_type == *const T or first_param_type == *T) {
-                break :blk validator_fn(&result);
-            }
-        }
-        break :blk validator_fn();
-    };
-    call_res catch |err| {
-        var err_msg_buf: [256]u8 = undefined;
-        const err_msg = std.fmt.bufPrint(&err_msg_buf, "model validator failed: {s}", .{@errorName(err)}) catch "model validation failed";
-        try addError(error_list, path, errors.ValidationError.CustomValidationFailed, err_msg, null);
-        return false;
-    };
-    return true;
-}
-
-/// Get a validation message for a zigantic type error.
-fn getValidationMessage(comptime T: type, err: errors.ValidationError) []const u8 {
-    if (@hasDecl(T, "custom_messages")) {
-        if (errors.messageForConfig(err, T.custom_messages)) |msg| return msg;
-    }
-    return switch (err) {
-        error.TooShort => if (@hasDecl(T, "min"))
-            std.fmt.comptimePrint("must be at least {d} characters", .{T.min})
-        else
-            "too short",
-        error.TooLong => if (@hasDecl(T, "max"))
-            std.fmt.comptimePrint("must be at most {d} characters", .{T.max})
-        else
-            "too long",
-        error.TooSmall => if (@hasDecl(T, "min"))
-            std.fmt.comptimePrint("must be >= {d}", .{T.min})
-        else
-            "too small",
-        error.TooLarge => if (@hasDecl(T, "max"))
-            std.fmt.comptimePrint("must be <= {d}", .{T.max})
-        else
-            "too large",
-        error.InvalidEmail => "must be a valid email address",
-        error.InvalidUrl => "must be a valid URL",
-        error.PatternMismatch => if (@hasDecl(T, "regex_pattern"))
-            std.fmt.comptimePrint("must match pattern: {s}", .{T.regex_pattern})
-        else
-            "does not match required pattern",
-        error.TooFewItems => if (@hasDecl(T, "min"))
-            std.fmt.comptimePrint("must have at least {d} items", .{T.min})
-        else
-            "too few items",
-        error.TooManyItems => if (@hasDecl(T, "max"))
-            std.fmt.comptimePrint("must have at most {d} items", .{T.max})
-        else
-            "too many items",
-        error.CustomValidationFailed => "failed custom validation",
-        else => "validation failed",
-    };
-}
-
-/// Serialize a value to JSON string.
-pub fn toJson(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
-    return toJsonInternal(value, allocator, false);
-}
-
-/// Serialize a value to pretty-printed JSON string.
-pub fn toJsonPretty(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
-    return toJsonInternal(value, allocator, true);
-}
-
-fn toJsonInternal(value: anytype, allocator: std.mem.Allocator, pretty: bool) ![]const u8 {
-    var buffer = std.ArrayList(u8).empty;
-    errdefer buffer.deinit(allocator);
-
-    try writeJson(@TypeOf(value), value, &buffer, allocator, 0, pretty);
-
-    return buffer.toOwnedSlice(allocator);
-}
-
-fn writeJson(
-    comptime T: type,
-    value: T,
-    buffer: *std.ArrayList(u8),
-    allocator: std.mem.Allocator,
-    depth: usize,
-    pretty: bool,
-) !void {
-    const info = @typeInfo(T);
-
-    // Handle optionals first
-    if (info == .optional) {
-        if (value) |v| {
-            try writeJson(info.optional.child, v, buffer, allocator, depth, pretty);
-        } else {
-            try buffer.appendSlice(allocator, "null");
-        }
-        return;
-    }
-
-    // Handle slices (must check before struct since slices can't have decls)
-    if (info == .pointer and info.pointer.size == .slice) {
-        // String slice
-        if (info.pointer.child == u8) {
-            try writeJsonString(value, buffer, allocator);
-            return;
-        }
-
-        // Array slice
-        try buffer.append(allocator, '[');
-        for (value, 0..) |item, i| {
-            if (i > 0) {
-                try buffer.append(allocator, ',');
-                if (pretty) try buffer.append(allocator, ' ');
-            }
-            try writeJson(@TypeOf(item), item, buffer, allocator, depth + 1, pretty);
-        }
-        try buffer.append(allocator, ']');
-        return;
-    }
-
-    // Handle primitives
-    switch (info) {
-        .int => {
-            var int_buf: [32]u8 = undefined;
-            const int_str = std.fmt.bufPrint(&int_buf, "{d}", .{value}) catch return error.OutOfMemory;
-            try buffer.appendSlice(allocator, int_str);
-            return;
-        },
-        .float => {
-            var float_buf: [64]u8 = undefined;
-            const float_str = std.fmt.bufPrint(&float_buf, "{d}", .{value}) catch return error.OutOfMemory;
-            try buffer.appendSlice(allocator, float_str);
-            return;
-        },
-        .bool => {
-            try buffer.appendSlice(allocator, if (value) "true" else "false");
-            return;
-        },
-        else => {},
-    }
-
-    // Handle structs - check for zigantic types first
-    if (info == .@"struct") {
-        if (@hasDecl(T, "zigantic_type")) {
-            const inner = value.get();
-            try writeJson(@TypeOf(inner), inner, buffer, allocator, depth, pretty);
-            return;
-        }
-
-        // Regular struct
-        try buffer.append(allocator, '{');
-        if (pretty) try buffer.append(allocator, '\n');
-
-        const fields = info.@"struct".fields;
-        var first = true;
-
-        inline for (fields) |field| {
-            if (!first) {
-                try buffer.append(allocator, ',');
-                if (pretty) try buffer.append(allocator, '\n');
-            }
-            first = false;
-
-            if (pretty) {
-                try buffer.appendNTimes(allocator, ' ', (depth + 1) * 2);
-            }
-
-            const json_field_name = comptime utils.getFieldAlias(T, field.name);
-            try writeJsonString(json_field_name, buffer, allocator);
-            try buffer.append(allocator, ':');
-            if (pretty) try buffer.append(allocator, ' ');
-
-            try writeJson(field.type, @field(value, field.name), buffer, allocator, depth + 1, pretty);
-        }
-
-        if (pretty) {
-            try buffer.append(allocator, '\n');
-            try buffer.appendNTimes(allocator, ' ', depth * 2);
-        }
-        try buffer.append(allocator, '}');
-        return;
-    }
-
-    // Fallback - write null for unknown types
-    try buffer.appendSlice(allocator, "null");
-}
-
-fn writeJsonString(str: []const u8, buffer: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
-    try buffer.append(allocator, '"');
-
-    for (str) |c| {
-        switch (c) {
-            '"' => try buffer.appendSlice(allocator, "\\\""),
-            '\\' => try buffer.appendSlice(allocator, "\\\\"),
-            '\n' => try buffer.appendSlice(allocator, "\\n"),
-            '\r' => try buffer.appendSlice(allocator, "\\r"),
-            '\t' => try buffer.appendSlice(allocator, "\\t"),
-            else => {
-                if (std.ascii.isControl(c)) {
-                    try buffer.appendSlice(allocator, "\\u00");
-                    const hex = "0123456789abcdef";
-                    try buffer.append(allocator, hex[c >> 4]);
-                    try buffer.append(allocator, hex[c & 0xf]);
-                } else {
-                    try buffer.append(allocator, c);
-                }
-            },
-        }
-    }
-
-    try buffer.append(allocator, '"');
-}
-
-test "fromJson - simple struct" {
+test "json round trip owns its strings" {
     const allocator = std.testing.allocator;
+    const string = @import("string.zig");
+    const number = @import("number.zig");
+    const model = @import("model.zig");
 
     const User = struct {
         name: []const u8,
-        age: i32,
-        active: bool,
+        age: u8,
     };
+    const UserSchema = model.object(User, .{
+        .name = string.string(.{ .min = 1 }),
+        .age = number.integer(u8, .{}),
+    }, .{});
 
-    const json_str =
-        \\{"name": "Alice", "age": 30, "active": true}
-    ;
-
-    var result = try fromJson(User, json_str, allocator);
+    var result = try parse(UserSchema, allocator, "{\"name\":\"Ada\",\"age\":36}", .{});
     defer result.deinit();
+    try std.testing.expect(result.ok());
+    try std.testing.expectEqualStrings("Ada", result.value.?.name);
 
-    try std.testing.expect(result.isValid());
-    const user = result.value.?;
-    try std.testing.expectEqualStrings("Alice", user.name);
-    try std.testing.expectEqual(@as(i32, 30), user.age);
-    try std.testing.expect(user.active);
+    const text = try stringify(UserSchema, allocator, result.value.?, .{});
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"name\":\"Ada\"") != null);
 }
 
-test "fromJson - with validation types" {
+test "invalid json and validation errors" {
     const allocator = std.testing.allocator;
-    const z = @import("zigantic.zig");
+    const number = @import("number.zig");
+    const Age = number.integer(u8, .{ .min = 18 });
 
-    const User = struct {
-        name: z.String(1, 50),
-        age: z.Int(i32, 18, 120),
-    };
+    try std.testing.expectError(error.InvalidJson, parse(Age, allocator, "{", .{}));
 
-    const json_str =
-        \\{"name": "Bob", "age": 25}
-    ;
-
-    var result = try fromJson(User, json_str, allocator);
+    var result = try parse(Age, allocator, "12", .{});
     defer result.deinit();
-
-    try std.testing.expect(result.isValid());
-    const user = result.value.?;
-    try std.testing.expectEqualStrings("Bob", user.name.get());
-    try std.testing.expectEqual(@as(i32, 25), user.age.get());
+    try std.testing.expect(!result.ok());
+    try std.testing.expectEqual(@as(usize, 1), result.errors().count());
+    try std.testing.expectEqualStrings("$", result.errors().first().?.path);
 }
 
-test "fromJson - validation error" {
+test "duplicate keys report their nested path" {
     const allocator = std.testing.allocator;
-    const z = @import("zigantic.zig");
+    const number = @import("number.zig");
+    const model = @import("model.zig");
 
-    const User = struct {
-        age: z.Int(i32, 18, 120),
-    };
+    const Inner = model.objectOf(.{ .x = number.integer(u8, .{}) }, .{});
+    const Outer = model.objectOf(.{ .inner = Inner }, .{});
 
-    const json_str =
-        \\{"age": 12}
-    ;
-
-    var result = try fromJson(User, json_str, allocator);
+    var result = try parse(Outer, allocator, "{\"inner\":{\"x\":1,\"x\":2}}", .{ .duplicates = .reject });
     defer result.deinit();
-
-    try std.testing.expect(!result.isValid());
-    try std.testing.expect(result.error_list.hasErrors());
-}
-
-test "fromJson - optional fields" {
-    const allocator = std.testing.allocator;
-
-    const User = struct {
-        name: []const u8,
-        nickname: ?[]const u8,
-    };
-
-    const json_str =
-        \\{"name": "Charlie"}
-    ;
-
-    var result = try fromJson(User, json_str, allocator);
-    defer result.deinit();
-
-    try std.testing.expect(result.isValid());
-    const user = result.value.?;
-    try std.testing.expectEqualStrings("Charlie", user.name);
-    try std.testing.expect(user.nickname == null);
-}
-
-test "fromJson - nested struct" {
-    const allocator = std.testing.allocator;
-
-    const Address = struct {
-        street: []const u8,
-        city: []const u8,
-    };
-
-    const User = struct {
-        name: []const u8,
-        address: Address,
-    };
-
-    const json_str =
-        \\{"name": "Diana", "address": {"street": "123 Main St", "city": "NYC"}}
-    ;
-
-    var result = try fromJson(User, json_str, allocator);
-    defer result.deinit();
-
-    try std.testing.expect(result.isValid());
-    const user = result.value.?;
-    try std.testing.expectEqualStrings("Diana", user.name);
-    try std.testing.expectEqualStrings("123 Main St", user.address.street);
-    try std.testing.expectEqualStrings("NYC", user.address.city);
-}
-
-test "fromJson - default values" {
-    const allocator = std.testing.allocator;
-    const z = @import("zigantic.zig");
-
-    const User = struct {
-        name: []const u8,
-        role: z.Default([]const u8, "user"),
-    };
-
-    const json_str =
-        \\{"name": "Eve"}
-    ;
-
-    var result = try fromJson(User, json_str, allocator);
-    defer result.deinit();
-
-    try std.testing.expect(result.isValid());
-    const user = result.value.?;
-    try std.testing.expectEqualStrings("Eve", user.name);
-    try std.testing.expectEqualStrings("user", user.role.get());
-}
-
-test "toJson - simple struct" {
-    const allocator = std.testing.allocator;
-
-    const User = struct {
-        name: []const u8,
-        age: i32,
-        active: bool,
-    };
-
-    const user = User{
-        .name = "Frank",
-        .age = 35,
-        .active = false,
-    };
-
-    const json_str = try toJson(user, allocator);
-    defer allocator.free(json_str);
-
-    // Verify it's valid JSON
-    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_str, .{});
-    defer parsed.deinit();
-
-    try std.testing.expectEqualStrings("Frank", parsed.value.object.get("name").?.string);
-    try std.testing.expectEqual(@as(i64, 35), parsed.value.object.get("age").?.integer);
-    try std.testing.expect(!parsed.value.object.get("active").?.bool);
-}
-
-test "toJson - with zigantic types" {
-    const allocator = std.testing.allocator;
-    const z = @import("zigantic.zig");
-
-    const User = struct {
-        name: z.String(1, 50),
-        age: z.Int(i32, 18, 120),
-    };
-
-    const user = User{
-        .name = try z.String(1, 50).init("Grace"),
-        .age = try z.Int(i32, 18, 120).init(28),
-    };
-
-    const json_str = try toJson(user, allocator);
-    defer allocator.free(json_str);
-
-    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_str, .{});
-    defer parsed.deinit();
-
-    try std.testing.expectEqualStrings("Grace", parsed.value.object.get("name").?.string);
-    try std.testing.expectEqual(@as(i64, 28), parsed.value.object.get("age").?.integer);
-}
-
-test "toJsonPretty" {
-    const allocator = std.testing.allocator;
-
-    const User = struct {
-        name: []const u8,
-        age: i32,
-    };
-
-    const user = User{
-        .name = "Henry",
-        .age = 40,
-    };
-
-    const json_str = try toJsonPretty(user, allocator);
-    defer allocator.free(json_str);
-
-    // Verify it contains newlines (pretty printed)
-    try std.testing.expect(std.mem.find(u8, json_str, "\n") != null);
-}
-
-/// Parse a URL query string or form urlencoded string into a validated struct.
-pub fn fromQueryString(comptime T: type, query_string: []const u8, allocator: std.mem.Allocator) !ParseResult(T) {
-    var result = ParseResult(T){
-        .value = null,
-        .error_list = errors.ErrorList.init(allocator),
-        .allocator = allocator,
-        .arena = std.heap.ArenaAllocator.init(allocator),
-    };
-    errdefer result.deinit();
-
-    const arena_alloc = result.arena.allocator();
-
-    var map = std.StringHashMap([]const u8).init(arena_alloc);
-
-    var it = std.mem.tokenizeScalar(u8, query_string, '&');
-    while (it.next()) |pair| {
-        if (pair.len == 0) continue;
-        const eq_idx = std.mem.findScalar(u8, pair, '=') orelse {
-            const decoded_key = try decodeUrlComponent(pair, arena_alloc);
-            try map.put(decoded_key, "");
-            continue;
-        };
-        const key = pair[0..eq_idx];
-        const val = pair[eq_idx + 1 ..];
-
-        const decoded_key = try decodeUrlComponent(key, arena_alloc);
-        const decoded_val = try decodeUrlComponent(val, arena_alloc);
-        try map.put(decoded_key, decoded_val);
-    }
-
-    result.value = try parseQueryMap(T, &map, arena_alloc, &result.error_list, "");
-    return result;
-}
-
-fn decodeUrlComponent(input: []const u8, allocator: std.mem.Allocator) ![]const u8 {
-    if (input.len == 0) return "";
-    const temp = try allocator.alloc(u8, input.len);
-    defer allocator.free(temp);
-    for (input, 0..) |c, i| {
-        temp[i] = if (c == '+') ' ' else c;
-    }
-    const decoded = std.Uri.percentDecodeInPlace(temp);
-    return try allocator.dupe(u8, decoded);
-}
-
-fn parseQueryMap(
-    comptime T: type,
-    map: *std.StringHashMap([]const u8),
-    allocator: std.mem.Allocator,
-    error_list: *errors.ErrorList,
-    path: []const u8,
-) !?T {
-    const info = @typeInfo(T);
-
-    if (info == .optional) {
-        const Child = info.optional.child;
-        return parseQueryMap(Child, map, allocator, error_list, path) catch |err| {
-            if (err == error.OutOfMemory) return err;
-            return null;
-        };
-    }
-
-    const is_container = comptime switch (info) {
-        .@"struct", .@"union", .@"enum", .@"opaque" => true,
-        else => false,
-    };
-
-    if (comptime is_container) {
-        if (@hasDecl(T, "init") and @hasDecl(T, "get")) {
-            const value_str = map.get(path) orelse {
-                if (@hasDecl(T, "initDefault")) {
-                    return T.initDefault();
-                }
-                try error_list.add(path, errors.ValidationError.MissingField, "field is required", null);
-                return null;
-            };
-
-            const init_fn_info = @typeInfo(@TypeOf(T.init)).@"fn";
-            const ExpectedType = init_fn_info.params[0].type.?;
-
-            const coerced_val = coerceQueryValue(ExpectedType, value_str, allocator) catch {
-                try error_list.add(path, errors.ValidationError.InvalidFormat, "invalid value format", value_str);
-                return null;
-            };
-
-            const init_return_type = @typeInfo(@TypeOf(T.init)).@"fn".return_type.?;
-            const val = blk: {
-                switch (@typeInfo(init_return_type)) {
-                    .error_union => {
-                        break :blk T.init(coerced_val) catch |err| {
-                            try addValidationErr(T, error_list, path, err, value_str);
-                            return null;
-                        };
-                    },
-                    else => {
-                        break :blk T.init(coerced_val);
-                    },
-                }
-            };
-            return val;
-        }
-    }
-
-    if (info == .@"struct") {
-        var result: T = undefined;
-        var has_errors = false;
-
-        inline for (info.@"struct".fields) |field| {
-            const json_field_name = comptime utils.getFieldAlias(T, field.name);
-
-            const alias_path = if (path.len == 0) json_field_name else try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path, json_field_name });
-            defer if (path.len > 0) allocator.free(alias_path);
-
-            const field_path = if (path.len == 0) field.name else try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path, field.name });
-            defer if (path.len > 0) allocator.free(field_path);
-
-            const chosen_path = if (map.contains(alias_path)) alias_path else field_path;
-
-            if (map.contains(chosen_path)) {
-                if (parseQueryMap(field.type, map, allocator, error_list, chosen_path)) |parsed_field| {
-                    if (parsed_field) |val| {
-                        var final_val = val;
-                        const has_validator = comptime @hasDecl(T, "validate_" ++ field.name);
-                        var field_ok = true;
-                        if (comptime has_validator) {
-                            const validator_fn = @field(T, "validate_" ++ field.name);
-                            final_val = validator_fn(val) catch |err| blk: {
-                                try handleFieldValidatorErr(error_list, chosen_path, err);
-                                has_errors = true;
-                                field_ok = false;
-                                break :blk val;
-                            };
-                        }
-                        if (field_ok) {
-                            @field(result, field.name) = final_val;
-                        }
-                    } else {
-                        const field_info = @typeInfo(field.type);
-                        if (field_info == .optional) {
-                            @field(result, field.name) = null;
-                        } else {
-                            has_errors = true;
-                        }
-                    }
-                } else |err| {
-                    if (err == error.OutOfMemory) return err;
-                    has_errors = true;
-                }
-            } else {
-                // Field is missing from query string Map!
-                if (handleMissingField(T, field, &result)) |_| {
-                    // Field was handled (has default or is optional)
-                    var final_val = @field(result, field.name);
-                    const has_validator = comptime @hasDecl(T, "validate_" ++ field.name);
-                    var field_ok = true;
-                    if (comptime has_validator) {
-                        const validator_fn = @field(T, "validate_" ++ field.name);
-                        final_val = validator_fn(final_val) catch |err| blk: {
-                            try handleFieldValidatorErr(error_list, chosen_path, err);
-                            has_errors = true;
-                            field_ok = false;
-                            break :blk @field(result, field.name);
-                        };
-                    }
-                    if (field_ok) {
-                        @field(result, field.name) = final_val;
-                    }
-                } else |_| {
-                    try error_list.add(chosen_path, errors.ValidationError.MissingField, "field is required", null);
-                    has_errors = true;
-                }
-            }
-        }
-
-        if (has_errors or error_list.count() > 0) return null;
-
-        if (!try runModelValidator(T, result, error_list, path)) return null;
-
-        return result;
-    }
-
-    return coerceQueryValue(T, map.get(path) orelse return null, allocator) catch null;
-}
-
-fn coerceQueryValue(comptime T: type, str: []const u8, allocator: std.mem.Allocator) !T {
-    const info = @typeInfo(T);
-    switch (info) {
-        .bool => {
-            if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1") or std.mem.eql(u8, str, "on")) return true;
-            if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0") or std.mem.eql(u8, str, "")) return false;
-            return error.InvalidFormat;
-        },
-        .int => {
-            return std.fmt.parseInt(T, str, 10);
-        },
-        .float => {
-            return std.fmt.parseFloat(T, str);
-        },
-        .pointer => |ptr| {
-            if (ptr.size == .slice and ptr.child == u8) {
-                return try allocator.dupe(u8, str);
-            }
-        },
-        else => {},
-    }
-    return error.UnsupportedType;
-}
-
-/// Serialize a value to URL query / form urlencoded string.
-pub fn toQueryString(value: anytype, allocator: std.mem.Allocator) ![]const u8 {
-    var list = std.ArrayList(u8).empty;
-    defer list.deinit(allocator);
-
-    try writeQueryValue(value, &list, allocator, "");
-
-    return list.toOwnedSlice(allocator);
-}
-
-fn writeQueryValue(value: anytype, list: *std.ArrayList(u8), allocator: std.mem.Allocator, path: []const u8) !void {
-    const T = @TypeOf(value);
-    const info = @typeInfo(T);
-
-    if (info == .optional) {
-        if (value) |val| {
-            try writeQueryValue(val, list, allocator, path);
-        }
-        return;
-    }
-
-    const is_container = comptime switch (info) {
-        .@"struct", .@"union", .@"enum", .@"opaque" => true,
-        else => false,
-    };
-
-    if (comptime is_container) {
-        if (@hasDecl(T, "get")) {
-            const unwrapped = value.get();
-            try writeQueryKeyValue(path, unwrapped, list, allocator);
-            return;
-        }
-    }
-
-    if (info == .@"struct") {
-        inline for (info.@"struct".fields) |field| {
-            const json_field_name = comptime utils.getFieldAlias(T, field.name);
-            const field_path = if (path.len == 0) json_field_name else try std.fmt.allocPrint(allocator, "{s}.{s}", .{ path, json_field_name });
-            defer if (path.len > 0) allocator.free(field_path);
-
-            try writeQueryValue(@field(value, field.name), list, allocator, field_path);
-        }
-        return;
-    }
-
-    try writeQueryKeyValue(path, value, list, allocator);
-}
-
-fn writeQueryKeyValue(key: []const u8, value: anytype, list: *std.ArrayList(u8), allocator: std.mem.Allocator) !void {
-    if (list.items.len > 0) {
-        try list.append(allocator, '&');
-    }
-
-    var key_buf: [256]u8 = undefined;
-    const encoded_key = try encodeUrlComponent(key, &key_buf, allocator);
-    try list.appendSlice(allocator, encoded_key);
-
-    try list.append(allocator, '=');
-
-    const V = @TypeOf(value);
-    const v_info = @typeInfo(V);
-
-    if (v_info == .pointer and v_info.pointer.size == .slice and v_info.pointer.child == u8) {
-        var val_buf: [1024]u8 = undefined;
-        const encoded_val = try encodeUrlComponent(value, &val_buf, allocator);
-        try list.appendSlice(allocator, encoded_val);
-    } else {
-        var str_buf: [128]u8 = undefined;
-        const str = try std.fmt.bufPrint(&str_buf, "{}", .{value});
-        var val_buf: [256]u8 = undefined;
-        const encoded_val = try encodeUrlComponent(str, &val_buf, allocator);
-        try list.appendSlice(allocator, encoded_val);
-    }
-}
-
-fn encodeUrlComponent(input: []const u8, buf: []u8, allocator: std.mem.Allocator) ![]const u8 {
-    _ = allocator;
-    var fbs = std.Io.Writer.fixed(buf);
-    for (input) |c| {
-        if (std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~') {
-            try fbs.writeByte(c);
-        } else if (c == ' ') {
-            try fbs.writeByte('+');
-        } else {
-            try fbs.print("%{X:0>2}", .{c});
-        }
-    }
-    return fbs.buffered();
-}
-
-test "query string serialization and deserialization" {
-    const allocator = std.testing.allocator;
-
-    const User = struct {
-        name: types.String(1, 50),
-        age: types.Int(i32, 0, 150),
-        active: bool,
-    };
-
-    const qs = "name=Alice+Johnson&age=25&active=true";
-    var result = try fromQueryString(User, qs, allocator);
-    defer result.deinit();
-
-    try std.testing.expect(result.isValid());
-    const user = result.value.?;
-    try std.testing.expectEqualStrings("Alice Johnson", user.name.get());
-    try std.testing.expectEqual(@as(i32, 25), user.age.get());
-    try std.testing.expectEqual(true, user.active);
-
-    const serialized = try toQueryString(user, allocator);
-    defer allocator.free(serialized);
-    try std.testing.expectEqualStrings("name=Alice+Johnson&age=25&active=true", serialized);
-}
-
-test "json and query field aliases and naming conventions" {
-    const allocator = std.testing.allocator;
-
-    // 1. Struct with explicit aliases
-    const ExplicitUser = struct {
-        user_name: types.String(1, 50),
-        user_age: i32,
-
-        pub const zigantic_aliases = .{
-            .user_name = "username",
-            .user_age = "age",
-        };
-    };
-
-    const explicit_json = "{\"username\":\"Bob\",\"age\":42}";
-    var result_explicit = try fromJson(ExplicitUser, explicit_json, allocator);
-    defer result_explicit.deinit();
-
-    try std.testing.expect(result_explicit.isValid());
-    const user_explicit = result_explicit.value.?;
-    try std.testing.expectEqualStrings("Bob", user_explicit.user_name.get());
-    try std.testing.expectEqual(@as(i32, 42), user_explicit.user_age);
-
-    const explicit_serialized = try toJson(user_explicit, allocator);
-    defer allocator.free(explicit_serialized);
-    try std.testing.expect(std.mem.find(u8, explicit_serialized, "\"username\":\"Bob\"") != null);
-    try std.testing.expect(std.mem.find(u8, explicit_serialized, "\"age\":42") != null);
-
-    // 2. Struct with automatic naming policy (camelCase -> snake_case)
-    const CamelUser = struct {
-        firstName: []const u8,
-        lastName: []const u8,
-
-        pub const zigantic_naming = utils.NamingPolicy.snake_case;
-    };
-
-    const snake_json = "{\"first_name\":\"Alice\",\"last_name\":\"Smith\"}";
-    var result_camel = try fromJson(CamelUser, snake_json, allocator);
-    defer result_camel.deinit();
-
-    try std.testing.expect(result_camel.isValid());
-    const user_camel = result_camel.value.?;
-    try std.testing.expectEqualStrings("Alice", user_camel.firstName);
-    try std.testing.expectEqualStrings("Smith", user_camel.lastName);
-
-    const camel_serialized = try toJson(user_camel, allocator);
-    defer allocator.free(camel_serialized);
-    try std.testing.expect(std.mem.find(u8, camel_serialized, "\"first_name\":\"Alice\"") != null);
-    try std.testing.expect(std.mem.find(u8, camel_serialized, "\"last_name\":\"Smith\"") != null);
-}
-
-test "fromJson - DefaultFactory dynamically generated values" {
-    const allocator = std.testing.allocator;
-
-    const dummy_factory = struct {
-        var call_counter: i32 = 0;
-        fn nextId() i32 {
-            call_counter += 1;
-            return call_counter;
-        }
-    };
-
-    const Device = struct {
-        name: []const u8,
-        id: types.DefaultFactory(i32, dummy_factory.nextId),
-    };
-
-    // When ID is missing, it should call the factory function
-    const json_str = "{\"name\":\"Sensor A\"}";
-    var result1 = try fromJson(Device, json_str, allocator);
-    defer result1.deinit();
-
-    try std.testing.expect(result1.isValid());
-    try std.testing.expectEqual(@as(i32, 1), result1.value.?.id.get());
-
-    var result2 = try fromJson(Device, json_str, allocator);
-    defer result2.deinit();
-
-    try std.testing.expect(result2.isValid());
-    try std.testing.expectEqual(@as(i32, 2), result2.value.?.id.get());
-
-    // When ID is provided, it should use the provided value instead
-    const json_with_id = "{\"name\":\"Sensor B\",\"id\":99}";
-    var result3 = try fromJson(Device, json_with_id, allocator);
-    defer result3.deinit();
-
-    try std.testing.expect(result3.isValid());
-    try std.testing.expectEqual(@as(i32, 99), result3.value.?.id.get());
-}
-
-test "fromQueryString - DefaultFactory" {
-    const allocator = std.testing.allocator;
-
-    const static_factory = struct {
-        fn getVal() i32 {
-            return 42;
-        }
-    };
-
-    const ConfigItem = struct {
-        key: []const u8,
-        val: types.DefaultFactory(i32, static_factory.getVal),
-    };
-
-    const qs = "key=port";
-    var result = try fromQueryString(ConfigItem, qs, allocator);
-    defer result.deinit();
-
-    try std.testing.expect(result.isValid());
-    try std.testing.expectEqualStrings("port", result.value.?.key);
-    try std.testing.expectEqual(@as(i32, 42), result.value.?.val.get());
-}
-
-test "fromJson and fromQueryString - field-level and model-level validators" {
-    const allocator = std.testing.allocator;
-
-    const TestModel = struct {
-        email: types.Email,
-        age: i32,
-        secret_code: []const u8,
-
-        pub fn validate_age(val: i32) !i32 {
-            if (val < 18) return error.AgeTooYoung;
-            // Let's cap the age at 100 as a modification
-            if (val > 100) return 100;
-            return val;
-        }
-
-        pub fn validate_secret_code(val: []const u8) ![]const u8 {
-            if (std.mem.eql(u8, val, "admin")) return error.ForbiddenCode;
-            return val;
-        }
-
-        pub fn validateModel(self: *const @This()) !void {
-            if (std.mem.eql(u8, self.email.get(), "forbidden@example.com") and self.age == 100) {
-                return error.ForbiddenCombination;
-            }
-        }
-    };
-
-    // 1. JSON parsing success (including field validator capping age to 100)
-    const valid_json = "{\"email\":\"user@example.com\",\"age\":150,\"secret_code\":\"pass123\"}";
-    var result1 = try fromJson(TestModel, valid_json, allocator);
-    defer result1.deinit();
-
-    try std.testing.expect(result1.isValid());
-    const model1 = result1.value.?;
-    try std.testing.expectEqualStrings("user@example.com", model1.email.get());
-    try std.testing.expectEqual(@as(i32, 100), model1.age); // capped by validator
-    try std.testing.expectEqualStrings("pass123", model1.secret_code);
-
-    // 2. JSON parsing field failure (age too young)
-    const young_json = "{\"email\":\"user@example.com\",\"age\":12,\"secret_code\":\"pass123\"}";
-    var result2 = try fromJson(TestModel, young_json, allocator);
-    defer result2.deinit();
-
-    try std.testing.expect(!result2.isValid());
-    try std.testing.expect(std.mem.find(u8, result2.error_list.errors.items[0].message, "AgeTooYoung") != null);
-
-    // 3. JSON parsing field failure (forbidden code)
-    const admin_json = "{\"email\":\"user@example.com\",\"age\":30,\"secret_code\":\"admin\"}";
-    var result3 = try fromJson(TestModel, admin_json, allocator);
-    defer result3.deinit();
-
-    try std.testing.expect(!result3.isValid());
-    try std.testing.expect(std.mem.find(u8, result3.error_list.errors.items[0].message, "ForbiddenCode") != null);
-
-    // 4. JSON parsing model failure (forbidden combination)
-    const forbidden_json = "{\"email\":\"forbidden@example.com\",\"age\":120,\"secret_code\":\"pass123\"}";
-    var result4 = try fromJson(TestModel, forbidden_json, allocator);
-    defer result4.deinit();
-
-    try std.testing.expect(!result4.isValid());
-    try std.testing.expect(std.mem.find(u8, result4.error_list.errors.items[0].message, "ForbiddenCombination") != null);
-
-    // 5. URL Query parameter success and validation
-    const valid_qs = "email=user@example.com&age=45&secret_code=hello";
-    var result5 = try fromQueryString(TestModel, valid_qs, allocator);
-    defer result5.deinit();
-
-    try std.testing.expect(result5.isValid());
-    try std.testing.expectEqual(@as(i32, 45), result5.value.?.age);
-
-    // 6. URL Query parameter field failure
-    const young_qs = "email=user@example.com&age=15&secret_code=hello";
-    var result6 = try fromQueryString(TestModel, young_qs, allocator);
-    defer result6.deinit();
-
-    try std.testing.expect(!result6.isValid());
-    try std.testing.expect(std.mem.find(u8, result6.error_list.errors.items[0].message, "AgeTooYoung") != null);
+    try std.testing.expect(!result.ok());
+    try std.testing.expectEqualStrings("E009", result.errors().first().?.code.label());
+    try std.testing.expectEqualStrings("$.inner.x", result.errors().first().?.path);
+
+    var accepted = try parse(Outer, allocator, "{\"inner\":{\"x\":1,\"x\":2}}", .{ .duplicates = .last });
+    defer accepted.deinit();
+    try std.testing.expect(accepted.ok());
+    try std.testing.expectEqual(@as(u8, 2), accepted.value.?.inner.x);
 }
