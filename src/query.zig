@@ -9,7 +9,9 @@ const schema = @import("schema.zig");
 const json = @import("json.zig");
 const naming = @import("naming.zig");
 
+/// Options for query serialization.
 pub const StringifyOptions = struct {
+    /// When true, null optionals are emitted as `key=null`; otherwise they are omitted.
     emit_nulls: bool = false,
 };
 
@@ -62,7 +64,8 @@ fn isUnreserved(c: u8) bool {
 
 fn encodeComponent(allocator: std.mem.Allocator, text: []const u8) error{OutOfMemory}![]u8 {
     const hex = "0123456789ABCDEF";
-    const out = allocator.alloc(u8, text.len * 3) catch return error.OutOfMemory;
+    const capacity = std.math.mul(usize, text.len, 3) catch return error.OutOfMemory;
+    const out = allocator.alloc(u8, capacity) catch return error.OutOfMemory;
     var len: usize = 0;
     for (text) |c| {
         if (isUnreserved(c)) {
@@ -81,6 +84,8 @@ fn encodeComponent(allocator: std.mem.Allocator, text: []const u8) error{OutOfMe
     return out[0..len];
 }
 
+/// Parses a query string into object schema `S` with coercion forced on (`coerce=true`).
+/// Input is percent-decoded into a synthetic JSON object decoded in the result arena; result ownership matches JSON parsing. Invalid percent encoding returns `InvalidJson`.
 pub fn parse(comptime S: type, allocator: std.mem.Allocator, input: []const u8, options: schema.Options) json.Error!json.Result(S) {
     comptime {
         if (S.kind != .object) @compileError("query parsing requires an object schema");
@@ -216,11 +221,13 @@ fn insertQueryEntry(allocator: std.mem.Allocator, root: *std.json.Value, key: []
     try insertQueryAt(allocator, root, segments, .{ .string = value });
 }
 
-/// Form bodies use the same encoding as query strings.
+/// Alias for `parse`; `application/x-www-form-urlencoded` bodies use the same encoding and coercion.
 pub fn parseForm(comptime S: type, allocator: std.mem.Allocator, input: []const u8, options: schema.Options) json.Error!json.Result(S) {
     return parse(S, allocator, input, options);
 }
 
+/// Serializes an object schema value as an `application/x-www-form-urlencoded` string.
+/// Keys and values are percent-encoded; nested objects, tuples, arrays, and records use bracket notation. Caller owns the returned slice.
 pub fn stringify(
     comptime S: type,
     allocator: std.mem.Allocator,
@@ -259,6 +266,11 @@ fn appendNull(allocator: std.mem.Allocator, writer: *std.Io.Writer, first: *bool
     try writePair(writer, first, encoded_key, "null");
 }
 
+fn appendText(allocator: std.mem.Allocator, writer: *std.Io.Writer, first: *bool, key: []const u8, text: []const u8) !void {
+    const encoded_key = try encodeComponent(allocator, key);
+    try writePair(writer, first, encoded_key, text);
+}
+
 fn appendValue(
     comptime F: type,
     allocator: std.mem.Allocator,
@@ -268,7 +280,6 @@ fn appendValue(
     value: anytype,
     emit_nulls: bool,
 ) (std.mem.Allocator.Error || std.Io.Writer.Error || error{Unsupported})!void {
-    const encoded_key = try encodeComponent(allocator, key);
     switch (F.kind) {
         .optional, .nullable => {
             if (value) |present| {
@@ -277,28 +288,28 @@ fn appendValue(
                 try appendNull(allocator, writer, first, key);
             }
         },
-        .default_value, .refine, .fallback => {
+        .default_value, .refine, .fallback, .metadata => {
             try appendValue(F.Inner, allocator, writer, first, key, value, emit_nulls);
         },
         .string => {
             const encoded = try encodeComponent(allocator, value);
-            try writePair(writer, first, encoded_key, encoded);
+            try appendText(allocator, writer, first, key, encoded);
         },
         .integer, .float => {
             const text = try std.fmt.allocPrint(allocator, "{d}", .{value});
-            try writePair(writer, first, encoded_key, text);
+            try appendText(allocator, writer, first, key, text);
         },
-        .boolean => try writePair(writer, first, encoded_key, if (value) "true" else "false"),
-        .enum_value => try writePair(writer, first, encoded_key, @tagName(value)),
+        .boolean => try appendText(allocator, writer, first, key, if (value) "true" else "false"),
+        .enum_value => try appendText(allocator, writer, first, key, @tagName(value)),
         .literal => {
             if (comptime @TypeOf(value) == []const u8) {
                 const encoded = try encodeComponent(allocator, value);
-                try writePair(writer, first, encoded_key, encoded);
+                try appendText(allocator, writer, first, key, encoded);
             } else if (comptime @TypeOf(value) == bool) {
-                try writePair(writer, first, encoded_key, if (value) "true" else "false");
+                try appendText(allocator, writer, first, key, if (value) "true" else "false");
             } else {
                 const text = try std.fmt.allocPrint(allocator, "{d}", .{value});
-                try writePair(writer, first, encoded_key, text);
+                try appendText(allocator, writer, first, key, text);
             }
         },
         .array => {

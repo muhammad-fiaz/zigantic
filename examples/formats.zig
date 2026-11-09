@@ -37,4 +37,16 @@ pub fn main() !void {
     for (checks) |check| {
         std.debug.print("{s}: {any}\n", .{ check.name, check.ok });
     }
+
+    const Day = z.date(.{});
+    var day = try z.parse(Day, allocator, "\"2024-02-29\"", .{});
+    defer day.deinit();
+    if (day.value) |value| {
+        std.debug.print("date: {d}-{d:0>2}-{d:0>2}\n", .{ value.year, value.month, value.day });
+    }
+
+    const Digest = z.bytes(.{ .encoding = .hex, .len = 4 });
+    var digest = try z.parse(Digest, allocator, "\"deadbeef\"", .{});
+    defer digest.deinit();
+    std.debug.print("bytes accepted: {any}\n", .{digest.ok()});
 }

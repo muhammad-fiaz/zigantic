@@ -37,4 +37,14 @@ pub fn main() !void {
     , .{});
     defer duplicate.deinit();
     std.debug.print("duplicate tags accepted: {any}\n", .{duplicate.ok()});
+
+    const Point = z.fixedArray(z.float(f64, .{}), 2, .{});
+    var point = try z.parse(Point, allocator, "[1.5,2.5]", .{});
+    defer point.deinit();
+    if (point.value) |coords| std.debug.print("point: {d},{d}\n", .{ coords[0], coords[1] });
+
+    const Tags = z.set(z.string(.{ .min = 1 }), .{});
+    var tags = try z.parse(Tags, allocator, "[\"fast\",\"safe\"]", .{});
+    defer tags.deinit();
+    std.debug.print("set accepted: {any}\n", .{tags.ok()});
 }

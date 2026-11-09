@@ -24,7 +24,7 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
       - name: Check formatting
-        run: zig fmt --check src/ examples/
+        run: zig fmt --check src/ examples/ bench/
       - name: Test
         run: zig build test --summary all
       - name: Examples
@@ -113,6 +113,11 @@ jobs:
           - { name: x86-macos, target: x86-macos }
           - { name: arm-linux-gnueabihf, target: arm-linux-gnueabihf }
           - { name: x86-freestanding, target: x86-freestanding }
+          - { name: x86_64-freebsd, target: x86_64-freebsd }
+          - { name: aarch64-windows, target: aarch64-windows }
+          - { name: wasm32-wasi, target: wasm32-wasi }
+          - { name: riscv64-linux, target: riscv64-linux-musl }
+          - { name: s390x-linux, target: s390x-linux-musl }
     steps:
       - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2

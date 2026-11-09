@@ -48,6 +48,42 @@ const SearchSchema = z.object(Search, .{
     .tags = z.array(z.string(.{ .min = 1 }), .{ .max = 8 }),
 }, .{ .naming = .snake_case });
 
+const ScoresSchema = z.record(z.integer(u16, .{ .max = 1000 }), .{ .min = 1, .key_min = 1, .key_max = 32 });
+
+const TagSetSchema = z.set(z.string(.{ .min = 1 }), .{ .min = 1, .max = 8 });
+
+const EntrySchema = z.tuple(.{
+    z.string(.{ .min = 1 }),
+    z.integer(u8, .{ .max = 120 }),
+    z.boolean(.{}),
+}, .{});
+
+const Created = struct { type: []const u8, id: u64 };
+const Deleted = struct { type: []const u8, id: u64 };
+const Event = union(enum) { created: Created, deleted: Deleted };
+const EventSchema = z.discriminatedUnion(Event, "type", .{
+    .created = z.object(Created, .{
+        .type = z.literal("created"),
+        .id = z.integer(u64, .{}),
+    }, .{}),
+    .deleted = z.object(Deleted, .{
+        .type = z.literal("deleted"),
+        .id = z.integer(u64, .{}),
+    }, .{}),
+}, .{});
+
+const Node = struct {
+    value: i32,
+    next: ?*const Node,
+};
+
+fn NodeSchema() type {
+    return z.object(Node, .{
+        .value = z.integer(i32, .{}),
+        .next = z.nullish(z.lazy(NodeSchema)),
+    }, .{});
+}
+
 const measure_rounds = 7;
 const warmup_rounds = 1;
 
@@ -235,6 +271,47 @@ fn datetimeParse(context: DateTimeContext) !void {
     if (value.date.day == 0) return error.InvalidBenchmarkInput;
 }
 
+fn recordParse(context: JsonContext) !void {
+    var result = try z.parse(ScoresSchema, context.allocator, context.document, .{});
+    defer result.deinit();
+    if (!result.ok() or result.value.?.count() != 3) return error.InvalidBenchmarkInput;
+}
+
+fn setParse(context: JsonContext) !void {
+    var result = try z.parse(TagSetSchema, context.allocator, context.document, .{});
+    defer result.deinit();
+    if (!result.ok() or result.value.?.len != 3) return error.InvalidBenchmarkInput;
+}
+
+fn tupleParse(context: JsonContext) !void {
+    var result = try z.parse(EntrySchema, context.allocator, context.document, .{});
+    defer result.deinit();
+    if (!result.ok() or result.value.?[1] != 36) return error.InvalidBenchmarkInput;
+}
+
+fn unionParse(context: JsonContext) !void {
+    var result = try z.parse(EventSchema, context.allocator, context.document, .{});
+    defer result.deinit();
+    if (!result.ok()) return error.InvalidBenchmarkInput;
+    switch (result.value.?) {
+        .deleted => |deleted| if (deleted.id != 42) return error.InvalidBenchmarkInput,
+        else => return error.InvalidBenchmarkInput,
+    }
+}
+
+fn recursiveParse(context: JsonContext) !void {
+    var result = try z.parse(NodeSchema(), context.allocator, context.document, .{});
+    defer result.deinit();
+    if (!result.ok() or result.value.?.next == null) return error.InvalidBenchmarkInput;
+}
+
+fn durationParse(context: DateTimeContext) !void {
+    const text = context.inputs[context.index.* % context.inputs.len];
+    context.index.* +%= 1;
+    const value = try z.Duration.parse(text);
+    if (value.isZero() and !std.mem.eql(u8, text, "PT0S")) return error.InvalidBenchmarkInput;
+}
+
 pub fn main() !void {
     var threaded: std.Io.Threaded = .init(std.heap.smp_allocator, .{});
     defer threaded.deinit();
@@ -273,11 +350,16 @@ pub fn main() !void {
         "2025-01-01T00:00:00Z",
         "2024-12-31 23:59:59-05:00",
     };
+    const duration_inputs = [_][]const u8{
+        "P3Y6M4DT12H30M5S",
+        "P2W",
+        "-PT5M",
+    };
 
     var email_index: usize = 0;
     var datetime_index: usize = 0;
 
-    var results: [11]Result = undefined;
+    var results: [17]Result = undefined;
     results[0] = try measure("json_model_parse", 20_000, JsonContext{
         .allocator = allocator,
         .document = user_document,
@@ -321,6 +403,30 @@ pub fn main() !void {
         .inputs = &datetime_inputs,
         .index = &datetime_index,
     }, datetimeParse, io);
+    results[11] = try measure("record_parse", 20_000, JsonContext{
+        .allocator = allocator,
+        .document = "{\"ada\":95,\"grace\":99,\"linus\":88}",
+    }, recordParse, io);
+    results[12] = try measure("set_parse", 20_000, JsonContext{
+        .allocator = allocator,
+        .document = "[\"fast\",\"safe\",\"simple\"]",
+    }, setParse, io);
+    results[13] = try measure("tuple_parse", 20_000, JsonContext{
+        .allocator = allocator,
+        .document = "[\"Ada\",36,true]",
+    }, tupleParse, io);
+    results[14] = try measure("union_parse", 20_000, JsonContext{
+        .allocator = allocator,
+        .document = "{\"type\":\"deleted\",\"id\":42}",
+    }, unionParse, io);
+    results[15] = try measure("recursive_parse", 10_000, JsonContext{
+        .allocator = allocator,
+        .document = "{\"value\":1,\"next\":{\"value\":2,\"next\":null}}",
+    }, recursiveParse, io);
+    results[16] = try measure("duration_parse", 500_000, DateTimeContext{
+        .inputs = duration_inputs[0..],
+        .index = &datetime_index,
+    }, durationParse, io);
 
     std.debug.print("zigantic benchmarks\n", .{});
     std.debug.print("zig {s} | {s}-{s} | ReleaseFast | smp_allocator\n", .{
@@ -343,4 +449,16 @@ pub fn main() !void {
             result.ops_per_sec,
         });
     }
+
+    var counting = std.testing.FailingAllocator.init(allocator, .{});
+    var counted = try z.parse(UserSchema, counting.allocator(), user_document, .{});
+    const allocations = counting.allocations;
+    const deallocations = counting.deallocations;
+    const bytes = counting.allocated_bytes;
+    counted.deinit();
+    std.debug.print("\njson_model_parse allocation profile: {d} allocations, {d} bytes, {d} deallocations\n", .{
+        allocations,
+        bytes,
+        deallocations,
+    });
 }

@@ -9,6 +9,8 @@ const std = @import("std");
 const tint = @import("tint");
 const error_mod = @import("error.zig");
 
+/// One validation finding. Strings are borrowed until `List.add` copies them
+/// into the list arena; callers may free inputs immediately after `add`.
 pub const Issue = struct {
     code: error_mod.Code,
     path: []const u8,
@@ -17,12 +19,16 @@ pub const Issue = struct {
     received: ?[]const u8 = null,
 };
 
+/// Re-export of tint's ANSI capability. `none` disables escape sequences in rendered text.
 pub const Capability = tint.ansi.Capability;
 
+/// Construction options for `List`. `capacity` pre-sizes the entries buffer.
 pub const Options = struct {
     capacity: usize = 8,
 };
 
+/// Rendering options. `capability` selects color emission; `show_expected`/`show_received`
+/// gate detail lines; `indent` sets spaces per nesting level.
 pub const RenderOptions = struct {
     capability: Capability = .none,
     show_expected: bool = true,
@@ -46,11 +52,15 @@ fn resetColor(writer: *std.Io.Writer, capability: Capability) !void {
     try writer.writeAll(tint.ansi.reset.foreground);
 }
 
+/// Owning buffer of issues. The list arena owns copies of every string;
+/// entries preserve insertion order until `clear`, `rollback`, or `deinit`.
 pub const List = struct {
     allocator: std.mem.Allocator,
     entries: std.ArrayList(Issue),
     arena: *std.heap.ArenaAllocator,
 
+    /// Creates a list using `allocator`. Allocates the arena and entries buffer;
+    /// caller owns the list and must call `deinit`. Fails with `OutOfMemory`.
     pub fn init(allocator: std.mem.Allocator, options: Options) !List {
         const arena = try allocator.create(std.heap.ArenaAllocator);
         errdefer allocator.destroy(arena);
@@ -64,6 +74,8 @@ pub const List = struct {
         };
     }
 
+    /// Frees the entries buffer, the arena, and the arena allocation itself.
+    /// The list is invalidated afterwards and must not be reused.
     pub fn deinit(self: *List) void {
         self.entries.deinit(self.allocator);
         self.arena.deinit();
@@ -77,23 +89,28 @@ pub const List = struct {
         _ = self.arena.reset(.retain_capacity);
     }
 
+    /// Number of recorded issues. No allocation.
     pub fn count(self: *const List) usize {
         return self.entries.items.len;
     }
 
+    /// True when no issues are recorded. No allocation.
     pub fn isEmpty(self: *const List) bool {
         return self.entries.items.len == 0;
     }
 
+    /// Issue at `index`; caller must ensure `index < count`. Returns a copy.
     pub fn at(self: *const List, index: usize) Issue {
         return self.entries.items[index];
     }
 
+    /// First issue, or null when empty. Returns a copy.
     pub fn first(self: *const List) ?Issue {
         if (self.entries.items.len == 0) return null;
         return self.entries.items[0];
     }
 
+    /// Last issue, or null when empty. Returns a copy.
     pub fn last(self: *const List) ?Issue {
         if (self.entries.items.len == 0) return null;
         return self.entries.items[self.entries.items.len - 1];
@@ -115,6 +132,8 @@ pub const List = struct {
         return self.arena.allocator().dupe(u8, bytes);
     }
 
+    /// Appends `issue`, copying `path`, `message`, `expected`, and `received` into the arena.
+    /// Caller may free inputs immediately. Fails with `OutOfMemory`.
     pub fn add(self: *List, issue: Issue) !void {
         try self.entries.append(self.allocator, .{
             .code = issue.code,
@@ -125,6 +144,8 @@ pub const List = struct {
         });
     }
 
+    /// Appends an issue for `code` with its default message. Copies strings into
+    /// the arena like `add`; fails with `OutOfMemory`.
     pub fn addCode(
         self: *List,
         code: error_mod.Code,
@@ -135,6 +156,8 @@ pub const List = struct {
         try self.add(.{ .code = code, .path = path, .message = code.message(), .expected = expected, .received = received });
     }
 
+    /// Appends an issue for a `ValidationError` by mapping it to its `Code`.
+    /// Copies strings into the arena; fails with `OutOfMemory`.
     pub fn addError(
         self: *List,
         err: error_mod.ValidationError,
@@ -145,6 +168,8 @@ pub const List = struct {
         try self.addCode(error_mod.codeFor(err), path, expected, received);
     }
 
+    /// Writes issues as plain or colored text to `writer`. No allocation.
+    /// May fail with writer errors.
     pub fn write(self: *const List, writer: *std.Io.Writer, options: RenderOptions) !void {
         for (self.entries.items, 0..) |issue, index| {
             if (index > 0) try writer.writeByte('\n');
@@ -189,6 +214,8 @@ pub const List = struct {
         }
     }
 
+    /// Renders issues to a newly allocated `[]u8` in `allocator`. Caller owns
+    /// the slice and must free it. Fails with `OutOfMemory` or writer errors.
     pub fn render(self: *const List, allocator: std.mem.Allocator, options: RenderOptions) ![]u8 {
         var buffer: std.Io.Writer.Allocating = .init(allocator);
         errdefer buffer.deinit();
@@ -196,6 +223,8 @@ pub const List = struct {
         return buffer.toOwnedSlice();
     }
 
+    /// Writes issues as a JSON array to `writer`. No allocation.
+    /// May fail with writer errors.
     pub fn writeJson(self: *const List, writer: *std.Io.Writer) !void {
         var json: std.json.Stringify = .{ .writer = writer, .options = .{} };
         try json.beginArray();
@@ -220,6 +249,8 @@ pub const List = struct {
         try json.endArray();
     }
 
+    /// Renders issues as a JSON array in `allocator`. Caller owns the returned
+    /// slice and must free it. Fails with `OutOfMemory` or writer errors.
     pub fn toJson(self: *const List, allocator: std.mem.Allocator) ![]u8 {
         var buffer: std.Io.Writer.Allocating = .init(allocator);
         errdefer buffer.deinit();

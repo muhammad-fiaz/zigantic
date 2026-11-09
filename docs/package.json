@@ -1,6 +1,6 @@
 {
   "name": "zigantic-docs",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Documentation for zigantic - Type-safe validation for Zig",
   "author": "Muhammad Fiaz",
   "license": "MIT",

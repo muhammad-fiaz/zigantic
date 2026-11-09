@@ -7,6 +7,7 @@
 
 const std = @import("std");
 
+/// Field-name case policy. Applied to Zig field names at compile time to derive JSON keys.
 pub const Policy = enum {
     verbatim,
     camel_case,
@@ -17,6 +18,7 @@ pub const Policy = enum {
     upper_case,
 };
 
+/// Field alias mapping. `field` is the Zig field name; `keys` are extra accepted input keys.
 pub const Alias = struct {
     field: []const u8,
     keys: []const []const u8,

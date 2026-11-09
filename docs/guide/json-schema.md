@@ -14,11 +14,28 @@ const text = try z.jsonSchema(UserSchema, allocator, .{});
 defer allocator.free(text);
 ```
 
-The service takes the allocator, then a trailing options value. The current
-release reserves the options value for future generator settings; pass `.{}`.
+The service takes the allocator, then `z.JsonSchemaOptions`. The default target
+is Draft 2020-12. Five targets are supported:
 
-The document uses a root `$ref` and a `$defs` object so recursive schemas can
-refer back to themselves without infinite output:
+```zig
+const modern = try z.jsonSchema(UserSchema, allocator, .{});
+const draft2019 = try z.jsonSchema(UserSchema, allocator, .{ .target = .draft_2019_09 });
+const draft7 = try z.jsonSchema(UserSchema, allocator, .{ .target = .draft_07 });
+const draft6 = try z.jsonSchema(UserSchema, allocator, .{ .target = .draft_06 });
+const draft5 = try z.jsonSchema(UserSchema, allocator, .{ .target = .draft_05 });
+```
+
+| Target | `$schema` | Definitions | Tuples |
+| --- | --- | --- | --- |
+| `.draft_2020_12` | `https://json-schema.org/draft/2020-12/schema` | `$defs` | `prefixItems` |
+| `.draft_2019_09` | `https://json-schema.org/draft/2019-09/schema` | `$defs` | `items` array |
+| `.draft_07` | `http://json-schema.org/draft-07/schema#` | `definitions` | `items` array |
+| `.draft_06` | `http://json-schema.org/draft-06/schema#` | `definitions` | `items` array |
+| `.draft_05` | `http://json-schema.org/draft-05/schema#` | `definitions` | `items` array |
+
+A root `$ref` and a definitions object keep recursive schemas finite. Draft
+2020-12 and 2019-09 use `$defs` and `#/$defs/...`; older drafts use
+`definitions` and `#/definitions/...`:
 
 ```json
 {
@@ -38,19 +55,25 @@ Each recursive type is registered once and receives a stable hash-based key.
 | Schema | JSON Schema |
 | --- | --- |
 | `z.string(.{...})` | `type: "string"`, `minLength`, `maxLength`, `format`, `description` |
-| `z.integer(T, .{...})` | `type: "integer"`, `minimum`, `maximum`, `multipleOf`, `description` |
-| `z.float(T, .{...})` | `type: "number"`, `minimum`, `maximum`, `description` |
+| `z.integer(T, .{...})` | `type: "integer"`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `description` |
+| `z.float(T, .{...})` | `type: "number"`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `description` |
 | `z.boolean(.{})` | `type: "boolean"` |
 | `z.enumType(E, .{})` | `type: "string"` and an `enum` of member names |
-| `z.literal(value)` | `const` with the literal value |
+| `z.literal(value)` | `const` (Draft 6+) or one-element `enum` (Draft 5) |
 | `z.nullValue(.{})` | `type: "null"` |
 | `z.array(S, .{...})` | `type: "array"`, `items`, `minItems`, `maxItems`, `uniqueItems` |
-| `z.record(S, .{...})` | `type: "object"`, `additionalProperties: S`, `minProperties`, `maxProperties` |
+| `z.fixedArray(S, N, .{...})` | `type: "array"` with `minItems` and `maxItems` set to `N` |
+| `z.set(S, .{...})` | the array form plus `uniqueItems: true` |
+| `z.record(S, .{...})` | `type: "object"`, `additionalProperties: S`, `minProperties`, `maxProperties`, `propertyNames` |
 | `z.object(T, ..., .{...})` | `type: "object"`, `properties`, `required`, `additionalProperties`, `description` |
 | `unionOf` / `discriminatedUnion` | `oneOf` with each variant schema |
 | `optional(S)` | the inner schema, because absence is expressed by `required` |
 | `nullable(S)` | `anyOf: [S, {"type": "null"}]` |
-| `transform` | the input schema (`decode` maps it to the output type) |
+| `transform` / `codec` | the input schema (`decode` maps it to the output type) |
+| `z.meta(S, ...)` | the base schema plus `title`, `description`, `examples` and `$id` |
+| `z.withDefault(S, value)` | `allOf: [S]` plus a `default` value |
+| `z.date` / `z.time` / `z.dateTime` | `type: "string"` with the corresponding `format` |
+| `z.bytes` | a string with the matching encoding format, or `type: "array"` for `.array` |
 | `lazy` | `{"$ref": "#/$defs/..."}` plus a `$defs` entry |
 | `custom` | unsupported; `z.jsonSchema` returns `error.Unsupported` |
 | `fallback` / `refine` | the inner schema |
@@ -105,9 +128,16 @@ JSON Schema cannot express every check:
 - `.trim`, `.prefix`, `.suffix`, `.contains`, `.case` and `.charset` are
   enforced at decode time but not described.
 - `.even` is enforced for integers but is not a JSON Schema keyword.
-- Record key length limits (`key_min` / `key_max`) are enforced at decode time
-  but are not described.
 - Formats without a standard JSON Schema `format` name are emitted without one.
+- String prefix, suffix and contains constraints have no standard keyword and
+  are omitted.
+- Draft 5 has no `propertyNames`, so record key-length limits are enforced at
+  decode time but omitted from generated Draft 5 output.
+- Draft 5 expresses exclusive bounds with boolean `exclusiveMinimum` and
+  `exclusiveMaximum`; when inclusive and exclusive bounds are both present the
+  generator emits an `allOf` that preserves both constraints.
+- OpenAPI 3.0 output and JSON Schema import are not implemented; use one of the
+  five supported JSON Schema drafts and treat import as a manual mapping.
 - Refinements and custom checks are omitted.
 - Transforms describe their input type, because that is what the wire format
   contains.

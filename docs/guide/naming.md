@@ -31,8 +31,11 @@ The policy applies to input keys, output keys and generated JSON Schema.
 | `.lower_case` | `firstname` |
 | `.upper_case` | `FIRSTNAME` |
 
-Policies are applied by `z.naming.apply(text, policy)` at compile time; the same
-function is exported if you need to derive a key yourself.
+Policies are applied at compile time from the field names; the derivation
+itself is internal. The package exports the policy enum as `z.Naming` and the
+alias struct as `z.Alias`; there is no public key-derivation function, so
+derive keys through the object's output (for example, the keys written by
+`z.stringify`) or copy the mapping you need.
 
 ## Aliases
 

@@ -44,9 +44,13 @@ var buffer: [16]u8 = undefined;
 const text = try date.format(&buffer);
 ```
 
-It returns `error.NoSpaceLeft` when the buffer is too small. `Date` needs 10
-bytes, `Time` up to 18 with nanoseconds, and `DateTime` up to 32 with a numeric
-offset. Use a 40-byte buffer when the exact width is not important.
+It returns `error.NoSpaceLeft` when the buffer is too small. `Date` writes 10
+bytes for years `0000..9999` (11 bytes with a leading `-` for negative years,
+more for extreme years), `Time` writes 8 bytes, or 18 with nanoseconds, and
+`DateTime` writes the date, a `T`, the time and a `Z` or `±HH:MM` offset. Use
+the 48-byte buffer the temporal schemas use internally when the exact width is
+not important (for example, a 40-byte buffer in this guide's example for
+ordinary years).
 
 ## Conversion and comparison
 

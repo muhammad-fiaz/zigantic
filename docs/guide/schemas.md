@@ -19,6 +19,9 @@ const Active = z.boolean(.{});
 const Role = z.enumType(enum { user, admin }, .{});
 const Kind = z.literal("user");
 const Nothing = z.nullValue(.{});
+const Digest = z.bytes(.{ .encoding = .hex, .len = 32 });
+const Day = z.date(.{});
+const Moment = z.dateTime(.{});
 ```
 
 ## Objects
@@ -36,8 +39,10 @@ const UserSchema = z.object(User, .{
 ```
 
 `unknown_fields` may be `.reject` (default) or `.strip`. `.partial` allows any
-field to be missing; omitted fields keep their model default or the model's zero
-value.
+field to be missing; omitted fields keep their model default, or a `null` for
+optional fields, an empty const slice, an `empty` value, or the zero value
+when the field type has one. A field with none of those remains uninitialized
+and must not be read until it is assigned.
 
 When a separate Zig model is unnecessary, `z.objectOf` infers the struct with
 Zig 0.17's `@Struct` builtin. The inferred type is available as `S.Value`.
@@ -77,12 +82,14 @@ compile-time rules, query encoding and JSON Schema output.
 
 ```zig
 const Tags = z.array(z.string(.{ .min = 1 }), .{ .max = 8, .unique = true });
+const Point = z.fixedArray(z.float(f64, .{}), 2, .{});
+const TagSet = z.set(z.string(.{ .min = 1 }), .{});
 const Scores = z.record(z.integer(u16, .{}), .{ .max = 100 });
 ```
 
-`array` produces `[]const T`; `record` produces
-`std.array_hash_map.String(T)`. See [Collections](/guide/collections) for
-all size, uniqueness and key options.
+`array` and `set` produce `[]const T`; `fixedArray` produces `[N]T`; `record`
+produces `std.array_hash_map.String(T)`. See [Collections](/guide/collections)
+for all size, uniqueness and key options.
 
 ## Unions
 

@@ -80,6 +80,30 @@ reports `E012` with the configured message when it returns false. `decode`
 reports `E021` and `encode` returns `error.Unsupported`. Use them for values
 that never cross the JSON boundary, such as handles and opaque identifiers.
 
+### Reporting several issues
+
+A custom schema can accept `.validate` instead of `.check`. The callback
+receives `(*z.Context, T)` and may record any number of issues with
+`context.addIssue`, `context.addCode` or `context.fail`; after it returns, the
+caller reports `error.Reported` if anything was recorded.
+
+```zig
+fn checkRange(context: *z.Context, value: Range) !void {
+    if (value.min > value.max) {
+        try context.addIssue(.invalid_value, "minimum must not exceed maximum");
+    }
+    if (value.max - value.min > 1000) {
+        try context.addCode(.too_large, "span <= 1000", null);
+    }
+}
+
+const RangeSchema = z.custom(Range, .{ .validate = checkRange });
+```
+
+The context exposes `allocator()` for result-arena storage. Because callbacks
+must return `error.OutOfMemory` rather than retaining borrowed input, no hidden
+ownership is introduced.
+
 ## Recursive schemas
 
 ```zig

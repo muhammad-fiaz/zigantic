@@ -27,7 +27,10 @@ const evenTimeout = struct {
 
 const SettingsSchema = z.object(Settings, .{
     .retries = z.withDefault(z.integer(u8, .{ .max = 10 }), 3),
-    .label = z.optional(z.string(.{ .min = 1 })),
+    .label = z.optional(z.meta(z.string(.{ .min = 1 }), .{
+        .title = "Deployment label",
+        .description = "Optional human-readable label",
+    })),
     .timeout = z.refine(z.integer(u16, .{ .min = 100 }), .{
         .check = evenTimeout,
         .message = "timeout must be an even number of milliseconds",
@@ -38,8 +41,9 @@ const SettingsSchema = z.object(Settings, .{
 
 `optional` accepts an absent field, `nullable` accepts an explicit JSON `null`.
 The first changes whether the object requires the key; the second changes
-whether `null` is a valid value. A field may need both, and then the schema is
-`z.optional(z.nullable(S))`.
+whether `null` is a valid value. A field may need both; `z.nullish(S)`
+combines them in a single `?S.Value`, while `z.optional(z.nullable(S))`
+produces `??S.Value`.
 
 ## The program
 
@@ -77,6 +81,26 @@ pub fn main() !void {
     }, .{});
     defer issues.deinit();
     std.debug.print("typed check: {any}\n", .{issues.isEmpty()});
+
+    const Count = z.codec(z.string(.{}), z.integer(u32, .{ .max = 100 }), .{
+        .decode = struct {
+            fn apply(_: std.mem.Allocator, text: []const u8) !u32 {
+                return std.fmt.parseInt(u32, text, 10);
+            }
+        }.apply,
+        .encode = struct {
+            fn apply(pool: std.mem.Allocator, value: u32) ![]const u8 {
+                return std.fmt.allocPrint(pool, "{d}", .{value});
+            }
+        }.apply,
+    });
+    var count = try z.parse(Count, allocator, "\"42\"", .{});
+    defer count.deinit();
+    if (count.value) |value| {
+        const text = try z.stringify(Count, allocator, value, .{});
+        defer allocator.free(text);
+        std.debug.print("codec: {d} -> {s}\n", .{ value, text });
+    }
 }
 ```
 
@@ -86,6 +110,7 @@ pub fn main() !void {
 retries=3 label=null timeout=200 ratio=null
 refinement: timeout must be an even number of milliseconds
 typed check: true
+codec: 42 -> "42"
 ```
 
 ## What to notice
@@ -104,3 +129,6 @@ typed check: true
   an owning issue list, not a parse result, and has no `init`/`deinit` session.
 - `z.probability(f64, .{})` is shorthand for a float bounded to `0..1`; like
   every constructor it takes its options as a trailing `.{}`.
+- The codec is the bidirectional form of `transform`: the input schema defines
+  the JSON text, the output schema validates the typed value, and `stringify`
+  uses the reverse callback. Both callbacks receive the appropriate arena.

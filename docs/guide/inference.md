@@ -43,6 +43,25 @@ Use `z.object(Model, ...)` when the model already exists or when a type mismatch
 should be reported against a named field. Use `z.objectOf` for small transport
 payloads, generated shapes and tests.
 
+### Composing field sets
+
+`z.merge(A, B, .{})` (also `z.extend`) combines the `.fields` of two inferred
+objects into a new inferred object. Duplicate field names are a compile error,
+so an accidental override cannot silently change a schema. `z.pick(S, names,
+.{})` selects fields and `z.omit(S, names, .{})` removes them; pick rejects an
+unknown name, while omit ignores one.
+
+```zig
+const Name = z.objectOf(.{ .name = z.string(.{}) }, .{});
+const Age = z.objectOf(.{ .age = z.integer(u8, .{}) }, .{});
+const Both = z.merge(Name, Age, .{});
+const OnlyName = z.pick(Both, &.{"name"}, .{});
+const WithoutName = z.omit(Both, &.{"name"}, .{});
+```
+
+These helpers operate on inferred schemas, not declared models; a declared
+model already has a fixed field set.
+
 ## Tuples
 
 `z.tuple(.{...}, .{})` synthesizes `@Tuple` from named field schemas. Positions
@@ -64,7 +83,9 @@ std.debug.print("{d}, {d}\n", .{ point[0], point[1] });
 
 A tuple expects a JSON array with exactly the declared number of items. Each
 item error uses its index in the path (`$[1]`). Encoding writes the items in
-order. JSON Schema uses `prefixItems`, `minItems` and `maxItems`.
+order. JSON Schema uses `prefixItems`, `minItems` and `maxItems` on Draft
+2020-12; earlier drafts use the tuple form of `items` (plus
+`additionalItems: false`) with the same `minItems`/`maxItems`.
 
 ## Intersections
 
@@ -101,7 +122,7 @@ All three constructors describe themselves:
 | Constructor | JSON Schema |
 | --- | --- |
 | `z.objectOf` | `type: "object"` with `properties`, `required` and `additionalProperties` |
-| `z.tuple` | `type: "array"` with `prefixItems`, `minItems` and `maxItems` |
+| `z.tuple` | `type: "array"` with `prefixItems` (Draft 2020-12) or the `items` array form (earlier drafts), plus `minItems`/`maxItems` |
 | `z.intersection` | `allOf` containing every member |
 
 `z.jsonSchema` wraps the root in `$defs` and links it with `$ref`, so these

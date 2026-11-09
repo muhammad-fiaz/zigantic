@@ -3,26 +3,32 @@
 const std = @import("std");
 const schema = @import("schema.zig");
 
+/// Generates JSON Schema text for schema `S` using the target draft in `options`.
+/// The root schema is emitted under `root`; reused definitions are emitted under `$defs` or `definitions` as selected by the target. Caller owns the returned slice.
 pub fn generate(
     comptime S: type,
     allocator: std.mem.Allocator,
-    options: schema.EncodeOptions,
+    options: schema.JsonSchemaOptions,
 ) (std.mem.Allocator.Error || std.Io.Writer.Error || error{Unsupported})![]u8 {
-    _ = options;
     var buffer: std.Io.Writer.Allocating = .init(allocator);
     errdefer buffer.deinit();
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     var json: std.json.Stringify = .{ .writer = &buffer.writer, .options = .{} };
     var definitions = schema.DefinitionRegistry{};
-    var state = schema.SchemaState{ .arena = arena_state.allocator(), .json = &json, .defs = &definitions };
+    var state = schema.SchemaState{
+        .arena = arena_state.allocator(),
+        .json = &json,
+        .defs = &definitions,
+        .target = options.target,
+    };
 
     try state.json.beginObject();
     try state.json.objectField("$schema");
-    try state.json.write("https://json-schema.org/draft/2020-12/schema");
+    try state.json.write(options.target.schemaUri());
     try state.json.objectField("$ref");
-    try state.json.write("#/$defs/root");
-    try state.json.objectField("$defs");
+    try state.json.write(if (options.target.usesDollarDefs()) "#/$defs/root" else "#/definitions/root");
+    try state.json.objectField(options.target.definitionsKeyword());
     try state.json.beginObject();
     try state.json.objectField("root");
     try S.writeJsonSchema(&state);
@@ -72,6 +78,50 @@ test "json schema generation" {
     defer parsed.deinit();
     const root = parsed.value.object.get("$defs").?.object.get("root").?;
     try std.testing.expect(root.object.get("properties") != null);
+}
+
+test "defaults are represented with allOf" {
+    const allocator = std.testing.allocator;
+    const number = @import("number.zig");
+    const modifiers = @import("modifiers.zig");
+
+    const Retries = modifiers.withDefault(number.integer(u8, .{}), 3);
+    const text = try generate(Retries, allocator, .{});
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"default\":3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"allOf\"") != null);
+}
+
+test "every supported draft has a valid root and definition style" {
+    const allocator = std.testing.allocator;
+    const string = @import("string.zig");
+    const targets = [_]schema.JsonSchemaTarget{ .draft_2020_12, .draft_2019_09, .draft_07, .draft_06, .draft_05 };
+
+    for (targets) |target| {
+        const text = try generate(string.string(.{}), allocator, .{ .target = target });
+        defer allocator.free(text);
+        try std.testing.expect(std.mem.indexOf(u8, text, target.schemaUri()) != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, target.definitionsKeyword()) != null);
+        try std.testing.expect(std.mem.indexOf(u8, text, target.refPrefix()) != null);
+    }
+}
+
+test "draft 5 uses legacy literal and exclusive bound forms" {
+    const allocator = std.testing.allocator;
+    const number = @import("number.zig");
+    const primitive = @import("primitive.zig");
+
+    const Open = number.integer(i32, .{ .min = 0, .exclusive_min = 2, .exclusive_max = 10 });
+    const text = try generate(Open, allocator, .{ .target = .draft_05 });
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"exclusiveMinimum\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"minimum\":2") != null);
+
+    const Kind = primitive.literal("user");
+    const literal_text = try generate(Kind, allocator, .{ .target = .draft_05 });
+    defer allocator.free(literal_text);
+    try std.testing.expect(std.mem.indexOf(u8, literal_text, "\"enum\":[\"user\"]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, literal_text, "\"const\"") == null);
 }
 
 test "recursive schemas use definitions and references" {

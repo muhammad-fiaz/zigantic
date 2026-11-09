@@ -41,7 +41,7 @@ body:
     attributes:
       label: Zigantic Version
       description: What version of zigantic are you using?
-      placeholder: "e.g., 0.0.4"
+      placeholder: "e.g., 0.0.5"
     validations:
       required: true
 

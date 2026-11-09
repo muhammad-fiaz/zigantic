@@ -223,7 +223,7 @@ gtag('config', '${GA_ID}');`,
           priceCurrency: "USD",
         },
         downloadUrl: "https://github.com/muhammad-fiaz/zigantic",
-        softwareVersion: "0.0.4",
+        softwareVersion: "0.0.5",
         license: "https://opensource.org/licenses/MIT",
       });
     } else {
@@ -280,7 +280,7 @@ gtag('config', '${GA_ID}');`,
       { text: "Examples", link: "/examples/" },
       { text: "API", link: "/api/reference" },
       {
-        text: "v0.0.4",
+        text: "v0.0.5",
         items: [
           { text: "Changelog", link: "https://github.com/muhammad-fiaz/zigantic/releases" },
           { text: "Contributing", link: "https://github.com/muhammad-fiaz/zigantic/blob/main/CONTRIBUTING.md" },
@@ -325,6 +325,7 @@ gtag('config', '${GA_ID}');`,
           text: "Advanced",
           items: [
             { text: "Custom Validators", link: "/guide/custom-validators" },
+            { text: "Ownership & Allocators", link: "/guide/ownership" },
             { text: "Benchmarks", link: "/guide/benchmarks" },
           ],
         },

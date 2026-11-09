@@ -1,6 +1,6 @@
 .{
     .name = .zigantic,
-    .version = "0.0.4",
+    .version = "0.0.5",
     .fingerprint = 0x1fba9aa888c5185b,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{

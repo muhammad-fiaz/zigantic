@@ -38,7 +38,9 @@ zig build run-all-examples
 
 ## Conventions used by every example
 
-- The allocator is always explicit and is the second argument to a service.
+- The allocator is always explicit, and is the second argument to a service
+  (except `z.checkFirst`, which takes the value second and a scratch buffer
+  third).
 - Every service takes a trailing options value, even when it is `.{}`.
 - A `ParseResult` owns its decoded strings; `defer result.deinit()` releases them.
 - Schemas are values of type `type`, so they can be declared as top-level

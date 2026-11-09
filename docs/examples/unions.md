@@ -91,8 +91,8 @@ deleted 42
   `E015: value does not match any union variant` when all of them fail. Use it
   when variants have distinct JSON shapes.
 - `discriminatedUnion` reads the discriminator as a string before validating
-  anything else. A missing or non-string discriminator is `E019`; a string that
-  names no variant is `E020`.
+  anything else. A missing discriminator is `E019`; a non-string or unknown one
+  is `E020`.
 - The discriminator is not removed from the document, so each variant schema
   declares it. A `z.literal` schema rejects a mismatched tag, which prevents an
   event from being decoded as the wrong variant.

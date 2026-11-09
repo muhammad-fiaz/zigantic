@@ -15,10 +15,15 @@ const SchemaError = schema.SchemaError;
 const EncodeState = schema.EncodeState;
 const SchemaState = schema.SchemaState;
 
+/// Configuration for intersection schemas; holds optional JSON Schema description.
 pub const Config = struct {
     description: []const u8 = "",
 };
 
+/// Creates an intersection schema requiring every member to accept the same value.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+/// All member Value types must match the first member; at least one member is required.
+/// Decode uses the first member then checks the rest; encode uses the first member.
 pub fn intersection(comptime schemas: anytype, comptime config: Config) type {
     const info = @typeInfo(@TypeOf(schemas)).@"struct";
     comptime {

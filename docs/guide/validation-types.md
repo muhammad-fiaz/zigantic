@@ -51,8 +51,9 @@ case, charset and format checks, and the returned slice excludes it.
 | --- | --- | --- |
 | `email` | RFC 5322 subset with dotted domain and alphabetic TLD | `email address` |
 | `url` | absolute URL with scheme and host | `absolute URL` |
+| `uri` | absolute URI with scheme; host optional | `absolute URI` |
 | `httpsUrl` | absolute URL with the `https` scheme | `HTTPS URL` |
-| `uuid` | 8-4-4-4-12 hexadecimal | `UUID` |
+| `uuid` / `guid` | 8-4-4-4-12 hexadecimal | `UUID` |
 | `ulid` | 26 Crockford base32 characters, first `0-7` | `ULID` |
 | `slug` | lowercase words separated by single hyphens | `kebab-case slug` |
 | `semver` | Semantic Version 2.0.0 | `semantic version` |
@@ -118,13 +119,18 @@ safe in hot paths and in `refine` callbacks.
 | --- | --- | --- | --- |
 | `min` | `?comptime_int` | `null` | `E002` |
 | `max` | `?comptime_int` | `null` | `E003` |
+| `exclusive_min` | `?comptime_int` | `null` | `E002` |
+| `exclusive_max` | `?comptime_int` | `null` | `E003` |
 | `even` | `bool` | `false` | `E005` |
 | `multiple_of` | `?comptime_int` | `null` | `E005` |
 | `description` | `[]const u8` | `""` | none |
 
 Bounds must fit `T`; a bound outside the type's range is a compile error. A
 value outside `T` is `E016`, a fractional JSON number is `E018`, and a
-non-numeric JSON value is `E001`.
+non-numeric JSON value is `E001`. JSON numbers that arrive as floats are
+converted with `f64` precision: whole numbers that round past the type's range
+report `E016` instead of crashing, so exact large integers should use an
+integer JSON form or a number string rather than a float.
 
 ```zig
 z.integer(i32, .{ .min = -10, .max = 10, .multiple_of = 2 });
@@ -139,6 +145,8 @@ z.integer(u8, .{ .even = true });
 | --- | --- | --- | --- |
 | `min` | `?comptime_float` | `null` | `E002` |
 | `max` | `?comptime_float` | `null` | `E003` |
+| `exclusive_min` | `?comptime_float` | `null` | `E002` |
+| `exclusive_max` | `?comptime_float` | `null` | `E003` |
 | `finite` | `bool` | `true` | `E017` |
 | `description` | `[]const u8` | `""` | none |
 
@@ -149,7 +157,11 @@ non-finite value returns `error.Unsupported`.
 
 ```zig
 z.positiveInt(u16, .{});
+z.negativeInt(i32, .{});
 z.nonNegativeInt(i64, .{});
+z.nonPositiveInt(i64, .{});
+z.safeInt(i64, .{});
+z.unsignedInt(u32, .{});
 z.percentage(f32, .{});
 z.probability(f64, .{});
 ```
@@ -161,8 +173,43 @@ constraints compose:
 const Ratio = z.probability(f64, .{ .description = "success ratio" });
 ```
 
-`positiveInt` keeps `min` at least `1`, `nonNegativeInt` keeps it at least `0`,
-`percentage` bounds to `0..100` and `probability` bounds to `0..1`.
+`positiveInt` keeps `min` at least `1`, `negativeInt` keeps `max` at most `-1`,
+`nonNegativeInt` keeps it at least `0`, `nonPositiveInt` keeps it at most `0`,
+`safeInt` bounds the value to the IEEE-754 safe integer range, and `unsignedInt`
+rejects signed types at compile time. `percentage` bounds to `0..100` and
+`probability` bounds to `0..1`.
+
+## Binary data
+
+`z.bytes(.{})` decodes textual binary data or a JSON byte array into
+`[]const u8`. Decoded bytes are owned by the parse result arena; encoding uses
+the `stringify` scratch arena.
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `encoding` | `z.ByteEncoding` | `.base64` |
+| `min` | `usize` | `0` |
+| `max` | `usize` | `maxInt(usize)` |
+| `len` | `?usize` | `null` |
+| `description` | `[]const u8` | `""` |
+
+`z.ByteEncoding` is `.base64`, `.base64url` (unpadded), `.hex` or `.array`.
+Length constraints apply to the decoded bytes, not the encoded text.
+
+```zig
+const Digest = z.bytes(.{ .encoding = .hex, .len = 32 });
+```
+
+## Temporal values
+
+`z.date(.{})`, `z.time(.{})` and `z.dateTime(.{})` decode ISO text directly
+into `z.Date`, `z.Time` and `z.DateTime`. They reject invalid calendar and clock
+values at decode time, are allocation-free, and encode back to ISO text.
+
+```zig
+const Day = z.date(.{});
+const Moment = z.dateTime(.{});
+```
 
 ## Booleans, enums, literals and null
 

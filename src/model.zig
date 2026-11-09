@@ -16,6 +16,8 @@ const SchemaError = schema.SchemaError;
 const EncodeState = schema.EncodeState;
 const SchemaState = schema.SchemaState;
 
+/// Configuration for object schemas: naming policy, unknown-field handling,
+/// input aliases, partial mode, and optional description for JSON Schema output.
 pub const Config = struct {
     naming: naming.Policy = .verbatim,
     unknown_fields: schema.UnknownFields = .reject,
@@ -31,8 +33,39 @@ fn isOptionalType(comptime T: type) bool {
     };
 }
 
+fn isConstSlice(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |info| info.size == .slice and info.attrs.@"const",
+        else => false,
+    };
+}
+
+fn hasEmptyValue(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct" => @hasDecl(T, "empty") and @TypeOf(T.empty) == T,
+        else => false,
+    };
+}
+
+fn canZero(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .int, .float, .bool, .void, .null, .@"enum", .vector => true,
+        .optional => |info| canZero(info.child),
+        .array => |info| canZero(info.child),
+        .@"struct" => |info| blk: {
+            for (info.field_types) |Field| if (!canZero(Field)) break :blk false;
+            break :blk true;
+        },
+        else => false,
+    };
+}
+
 fn initialValue(comptime T: type) T {
     const info = @typeInfo(T).@"struct";
+    // `object` with `.partial` may leave fields without a schema or default
+    // absent. Give each field the best defined initializer available instead of
+    // requiring the whole model to be trivially zeroable (a record contains
+    // pointers, for example).
     var out: T = undefined;
     inline for (info.field_names, 0..) |name, index| {
         const Field = info.field_types[index];
@@ -40,6 +73,12 @@ fn initialValue(comptime T: type) T {
             @field(out, name) = value;
         } else if (comptime isOptionalType(Field)) {
             @field(out, name) = null;
+        } else if (comptime isConstSlice(Field)) {
+            @field(out, name) = @as(Field, &.{});
+        } else if (comptime hasEmptyValue(Field)) {
+            @field(out, name) = Field.empty;
+        } else if (comptime canZero(Field)) {
+            @field(out, name) = std.mem.zeroes(Field);
         }
     }
     return out;
@@ -68,11 +107,10 @@ fn generatedDefaultPtr(comptime S: type) ?*const anyopaque {
     return null;
 }
 
-/// Builds an object schema whose model type is inferred from the schemas.
-///
-/// Configuration is the same as `object`, except that a partial object is
-/// rejected at compile time unless every field is optional or has a default:
-/// inferred values are never left uninitialized.
+/// Builds an inferred object schema; Value is a synthesized struct of field Values.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+/// Partial mode requires every field optional or defaulted; aliases and naming apply per Config.
+/// Duplicate mapped keys fail at compile time; missing required fields report at decode.
 pub fn objectOf(comptime schemas: anytype, comptime config: Config) type {
     const schema_info = @typeInfo(@TypeOf(schemas)).@"struct";
     const count = schema_info.field_names.len;
@@ -277,6 +315,139 @@ pub fn objectOf(comptime schemas: anytype, comptime config: Config) type {
     };
 }
 
+fn FieldsType(comptime names: []const []const u8, comptime types: []const type) type {
+    var field_names: [names.len][:0]const u8 = undefined;
+    inline for (names, 0..) |name, index| field_names[index] = &sentinelName(name);
+    var field_types: [types.len]type = undefined;
+    inline for (types, 0..) |FieldType, index| field_types[index] = FieldType;
+    var attrs: [names.len]std.lang.Type.Struct.FieldAttributes = undefined;
+    inline for (&attrs) |*attr| attr.* = .{};
+    return @Struct(.auto, null, &field_names, &field_types, &attrs);
+}
+
+fn fieldCount(comptime T: type) comptime_int {
+    return @typeInfo(T).@"struct".field_names.len;
+}
+
+fn mergedNames(comptime first: type, comptime second: type) [fieldCount(@TypeOf(first.fields)) + fieldCount(@TypeOf(second.fields))][]const u8 {
+    const first_info = @typeInfo(@TypeOf(first.fields)).@"struct";
+    const second_info = @typeInfo(@TypeOf(second.fields)).@"struct";
+    var names: [first_info.field_names.len + second_info.field_names.len][]const u8 = undefined;
+    var at: usize = 0;
+    for (first_info.field_names) |name| {
+        names[at] = name;
+        at += 1;
+    }
+    for (second_info.field_names) |name| {
+        for (names[0..at]) |existing| {
+            if (std.mem.eql(u8, existing, name)) @compileError("merge contains duplicate field '" ++ name ++ "'");
+        }
+        names[at] = name;
+        at += 1;
+    }
+    return names;
+}
+
+fn mergedTypes(comptime first: type, comptime second: type) [fieldCount(@TypeOf(first.fields)) + fieldCount(@TypeOf(second.fields))]type {
+    const names = mergedNames(first, second);
+    var types: [names.len]type = undefined;
+    inline for (names, 0..) |name, index| {
+        if (@hasField(@TypeOf(first.fields), name)) {
+            types[index] = @TypeOf(@field(first.fields, name));
+        } else {
+            types[index] = @TypeOf(@field(second.fields, name));
+        }
+    }
+    return types;
+}
+
+/// Merges two inferred-object field sets into a new object schema.
+/// Duplicate field names are a compile-time error.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+pub fn merge(comptime first: type, comptime second: type, comptime config: Config) type {
+    const names = mergedNames(first, second);
+    const types = mergedTypes(first, second);
+    const Fields = FieldsType(names[0..], types[0..]);
+    var fields: Fields = undefined;
+    inline for (@typeInfo(@TypeOf(first.fields)).@"struct".field_names) |name| {
+        @field(fields, name) = @field(first.fields, name);
+    }
+    inline for (@typeInfo(@TypeOf(second.fields)).@"struct".field_names) |name| {
+        @field(fields, name) = @field(second.fields, name);
+    }
+    return objectOf(fields, config);
+}
+
+/// Extends an inferred-object field set with additional fields.
+/// Duplicate field names are a compile-time error.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+pub fn extend(comptime first: type, comptime second: type, comptime config: Config) type {
+    return merge(first, second, config);
+}
+
+/// Selects fields from an inferred-object field set into a new object schema.
+/// Every selected name must exist; unknown or duplicate names fail at compile time.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+pub fn pick(comptime schemas: type, comptime selected: []const []const u8, comptime config: Config) type {
+    for (selected, 0..) |name, index| {
+        if (!@hasField(@TypeOf(schemas.fields), name)) @compileError("pick selects unknown field '" ++ name ++ "'");
+        for (selected[0..index]) |previous| {
+            if (std.mem.eql(u8, previous, name)) @compileError("pick contains duplicate field '" ++ name ++ "'");
+        }
+    }
+    var types: [selected.len]type = undefined;
+    inline for (selected, 0..) |name, index| types[index] = @TypeOf(@field(schemas.fields, name));
+    const Fields = FieldsType(selected, &types);
+    var fields: Fields = undefined;
+    inline for (selected) |name| @field(fields, name) = @field(schemas.fields, name);
+    return objectOf(fields, config);
+}
+
+/// Removes fields from an inferred-object field set into a new object schema.
+/// Unknown names are ignored; remaining field order is preserved.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+pub fn omit(comptime schemas: type, comptime excluded: []const []const u8, comptime config: Config) type {
+    const info = @typeInfo(@TypeOf(schemas.fields)).@"struct";
+    var count: usize = 0;
+    for (info.field_names) |name| {
+        var skip = false;
+        for (excluded) |item| if (std.mem.eql(u8, name, item)) {
+            skip = true;
+            break;
+        };
+        if (!skip) count += 1;
+    }
+    var names: [count][]const u8 = undefined;
+    var types: [count]type = undefined;
+    var at: usize = 0;
+    for (info.field_names) |name| {
+        var skip = false;
+        for (excluded) |item| if (std.mem.eql(u8, name, item)) {
+            skip = true;
+            break;
+        };
+        if (skip) continue;
+        names[at] = name;
+        types[at] = @TypeOf(@field(schemas.fields, name));
+        at += 1;
+    }
+    const Fields = FieldsType(names[0..count], types[0..count]);
+    var fields: Fields = undefined;
+    for (info.field_names) |name| {
+        var skip = false;
+        for (excluded) |item| if (std.mem.eql(u8, name, item)) {
+            skip = true;
+            break;
+        };
+        if (!skip) @field(fields, name) = @field(schemas.fields, name);
+    }
+    return objectOf(fields, config);
+}
+
+/// Binds declared model struct T to per-field schemas; Value is T.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+/// Schema fields must exist on T with matching Value type; uncovered T fields require
+/// a default, optional type, or partial mode. Decode reports missing/unknown fields.
 pub fn object(comptime T: type, comptime schemas: anytype, comptime config: Config) type {
     const model_info = @typeInfo(T).@"struct";
     const schema_info = @typeInfo(@TypeOf(schemas)).@"struct";
@@ -565,4 +736,50 @@ test "inferred object schema" {
     try std.testing.expect(profile.active);
     try std.testing.expect(profile.nickname == null);
     try Profile.check(&state, profile, "$");
+}
+
+test "merging and selecting inferred fields" {
+    const string = @import("string.zig");
+    const number = @import("number.zig");
+
+    const Name = objectOf(.{ .name = string.string(.{}) }, .{});
+    const Age = objectOf(.{ .age = number.integer(u8, .{}) }, .{});
+    const Both = merge(Name, Age, .{});
+    try std.testing.expect(@hasField(Both.Value, "name"));
+    try std.testing.expect(@hasField(Both.Value, "age"));
+
+    const OnlyName = pick(Both, &.{"name"}, .{});
+    try std.testing.expect(@hasField(OnlyName.Value, "name"));
+    try std.testing.expect(!@hasField(OnlyName.Value, "age"));
+
+    const NoName = omit(Both, &.{"name"}, .{});
+    try std.testing.expect(!@hasField(NoName.Value, "name"));
+    try std.testing.expect(@hasField(NoName.Value, "age"));
+}
+
+test "partial declared objects initialize omitted fields" {
+    const allocator = std.testing.allocator;
+    const Partial = struct {
+        name: []const u8,
+        age: u8,
+    };
+    const PartialSchema = object(Partial, .{
+        .name = @import("string.zig").string(.{}),
+        .age = @import("number.zig").integer(u8, .{}),
+    }, .{ .partial = true });
+
+    var list = try schema.IssueList.init(allocator, .{});
+    defer list.deinit();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var state = State{ .arena = arena.allocator(), .issues = &list };
+
+    const node = try std.json.parseFromSlice(std.json.Value, allocator, "{}", .{});
+    defer node.deinit();
+
+    const value = try PartialSchema.decode(&state, node.value, "$");
+    try std.testing.expectEqual(@as(usize, 0), value.name.len);
+    try std.testing.expectEqual(@as(u8, 0), value.age);
+    try PartialSchema.check(&state, value, "$");
+    try std.testing.expect(list.isEmpty());
 }

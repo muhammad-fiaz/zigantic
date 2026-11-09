@@ -11,14 +11,21 @@ const SchemaError = schema.SchemaError;
 const EncodeState = schema.EncodeState;
 const SchemaState = schema.SchemaState;
 
+/// Case constraint applied to string values.
+/// `.any` skips the check; `.lower` rejects any uppercase ASCII letter; `.upper` rejects any lowercase ASCII letter.
 pub const Case = enum { any, lower, upper };
 
+/// Character-set constraint applied to string values.
+/// `.any` skips the check; other variants require every byte to satisfy the corresponding ASCII predicate.
 pub const Charset = enum { any, ascii, printable, alphabetic, alphanumeric, numeric, hex };
 
+/// Built-in semantic format checked by string schemas.
+/// `.none` skips the check; other variants delegate to the predicates in `validators.zig`.
 pub const Format = enum {
     none,
     email,
     url,
+    uri,
     https_url,
     uuid,
     ulid,
@@ -40,17 +47,30 @@ pub const Format = enum {
     iso_duration,
 };
 
+/// Compile-time configuration for `string` and format shortcut constructors.
+/// `min`, `max`, and `len` bound the byte length; `prefix`, `suffix`, and `contains` check substrings; `trim` strips leading and trailing ASCII whitespace before validation; `description` is emitted in JSON Schema output.
 pub const Config = struct {
+    /// Minimum byte length; inclusive.
     min: usize = 0,
+    /// Maximum byte length; inclusive.
     max: usize = std.math.maxInt(usize),
+    /// Exact byte length when non-null.
     len: ?usize = null,
+    /// Required prefix; null skips the check.
     prefix: ?[]const u8 = null,
+    /// Required suffix; null skips the check.
     suffix: ?[]const u8 = null,
+    /// Required substring; null skips the check.
     contains: ?[]const u8 = null,
+    /// When true, strips leading and trailing ASCII whitespace before validation.
     trim: bool = false,
+    /// Letter-case constraint; see `Case`.
     case: Case = .any,
+    /// Character-set constraint; see `Charset`.
     charset: Charset = .any,
+    /// Semantic format constraint; see `Format`.
     format: Format = .none,
+    /// JSON Schema `description`, emitted when non-empty.
     description: []const u8 = "",
 };
 
@@ -119,6 +139,7 @@ fn formatValid(comptime format: Format, text: []const u8) bool {
         .none => true,
         .email => validators.isEmail(text),
         .url => validators.isUrl(text),
+        .uri => validators.isUri(text),
         .https_url => validators.isHttpsUrl(text),
         .uuid => validators.isUuid(text),
         .ulid => validators.isUlid(text),
@@ -146,6 +167,7 @@ fn expectedFormat(comptime format: Format) []const u8 {
         .none => "string",
         .email => "email address",
         .url => "absolute URL",
+        .uri => "absolute URI",
         .https_url => "HTTPS URL",
         .uuid => "UUID",
         .ulid => "ULID",
@@ -171,7 +193,7 @@ fn expectedFormat(comptime format: Format) []const u8 {
 fn jsonSchemaFormat(comptime format: Format) ?[]const u8 {
     return switch (format) {
         .email => "email",
-        .url, .https_url => "uri",
+        .url, .uri, .https_url => "uri",
         .uuid => "uuid",
         .ipv4 => "ipv4",
         .ipv6 => "ipv6",
@@ -239,6 +261,10 @@ fn withFormat(comptime config: Config, comptime format: Format) Config {
     return result;
 }
 
+/// Returns a string schema; `Value` is `[]const u8`.
+/// `decode` requires a JSON string unless `coerce` is set, in which case integers, floats, and booleans are converted to text; `decodeString` validates raw text.
+/// Decoded text is duplicated into `State.arena`. Validation failures record an issue and return `error.Reported`; allocation failure returns `error.OutOfMemory`.
+/// The schema type exposes `Value`, `kind`, `schema_name`, `is_optional`, `has_default`, `decode`, `decodeString`, `check`, `encode`, and `writeJsonSchema`.
 pub fn string(comptime config: Config) type {
     return struct {
         pub const Value = []const u8;
@@ -319,86 +345,141 @@ pub fn string(comptime config: Config) type {
     };
 }
 
+/// String schema validating an email address.
+/// Shorthand for `string` with `.format = .email`; see `string` for the schema protocol.
 pub fn email(comptime config: Config) type {
     return string(withFormat(config, .email));
 }
 
+/// String schema validating an absolute URL with a scheme and non-empty host.
+/// Shorthand for `string` with `.format = .url`; see `string` for the schema protocol.
 pub fn url(comptime config: Config) type {
     return string(withFormat(config, .url));
 }
 
+/// Absolute URI text. Unlike `url`, a host is not required, so URNs and
+/// non-hierarchical schemes are accepted.
+/// Shorthand for `string` with `.format = .uri`; see `string` for the schema protocol.
+pub fn uri(comptime config: Config) type {
+    return string(withFormat(config, .uri));
+}
+
+/// String schema validating an absolute `https` URL.
+/// Shorthand for `string` with `.format = .https_url`; see `string` for the schema protocol.
 pub fn httpsUrl(comptime config: Config) type {
     return string(withFormat(config, .https_url));
 }
 
+/// String schema validating a UUID in RFC 4122 textual form.
+/// Shorthand for `string` with `.format = .uuid`; see `string` for the schema protocol.
 pub fn uuid(comptime config: Config) type {
     return string(withFormat(config, .uuid));
 }
 
+/// GUID and UUID share the same canonical textual representation.
+/// Shorthand for `uuid` and `string` with `.format = .uuid`; see `string` for the schema protocol.
+pub fn guid(comptime config: Config) type {
+    return uuid(config);
+}
+
+/// String schema validating a ULID.
+/// Shorthand for `string` with `.format = .ulid`; see `string` for the schema protocol.
 pub fn ulid(comptime config: Config) type {
     return string(withFormat(config, .ulid));
 }
 
+/// String schema validating a kebab-case slug.
+/// Shorthand for `string` with `.format = .slug`; see `string` for the schema protocol.
 pub fn slug(comptime config: Config) type {
     return string(withFormat(config, .slug));
 }
 
+/// String schema validating Semantic Version 2.0.0 text.
+/// Shorthand for `string` with `.format = .semver`; see `string` for the schema protocol.
 pub fn semver(comptime config: Config) type {
     return string(withFormat(config, .semver));
 }
 
+/// String schema validating a phone number.
+/// Shorthand for `string` with `.format = .phone`; see `string` for the schema protocol.
 pub fn phoneNumber(comptime config: Config) type {
     return string(withFormat(config, .phone));
 }
 
+/// String schema validating a payment card number.
+/// Shorthand for `string` with `.format = .credit_card`; see `string` for the schema protocol.
 pub fn creditCard(comptime config: Config) type {
     return string(withFormat(config, .credit_card));
 }
 
+/// String schema validating a JWT compact serialization.
+/// Shorthand for `string` with `.format = .jwt`; see `string` for the schema protocol.
 pub fn jwt(comptime config: Config) type {
     return string(withFormat(config, .jwt));
 }
 
+/// String schema validating base64 text.
+/// Shorthand for `string` with `.format = .base64`; see `string` for the schema protocol.
 pub fn base64(comptime config: Config) type {
     return string(withFormat(config, .base64));
 }
 
+/// String schema validating base64url text.
+/// Shorthand for `string` with `.format = .base64url`; see `string` for the schema protocol.
 pub fn base64Url(comptime config: Config) type {
     return string(withFormat(config, .base64url));
 }
 
+/// String schema validating even-length hexadecimal text.
+/// Shorthand for `string` with `.format = .hex`; see `string` for the schema protocol.
 pub fn hex(comptime config: Config) type {
     return string(withFormat(config, .hex));
 }
 
+/// String schema validating a hex colour string.
+/// Shorthand for `string` with `.format = .hex_color`; see `string` for the schema protocol.
 pub fn hexColor(comptime config: Config) type {
     return string(withFormat(config, .hex_color));
 }
 
+/// String schema validating a MAC address.
+/// Shorthand for `string` with `.format = .mac_address`; see `string` for the schema protocol.
 pub fn macAddress(comptime config: Config) type {
     return string(withFormat(config, .mac_address));
 }
 
+/// String schema validating an IPv4 address.
+/// Shorthand for `string` with `.format = .ipv4`; see `string` for the schema protocol.
 pub fn ipv4(comptime config: Config) type {
     return string(withFormat(config, .ipv4));
 }
 
+/// String schema validating an IPv6 address.
+/// Shorthand for `string` with `.format = .ipv6`; see `string` for the schema protocol.
 pub fn ipv6(comptime config: Config) type {
     return string(withFormat(config, .ipv6));
 }
 
+/// String schema validating an ISO 8601 calendar date.
+/// Shorthand for `string` with `.format = .iso_date`; see `string` for the schema protocol.
 pub fn isoDate(comptime config: Config) type {
     return string(withFormat(config, .iso_date));
 }
 
+/// String schema validating an ISO 8601 clock time.
+/// Shorthand for `string` with `.format = .iso_time`; see `string` for the schema protocol.
 pub fn isoTime(comptime config: Config) type {
     return string(withFormat(config, .iso_time));
 }
 
+/// String schema validating an ISO 8601 date-time.
+/// Shorthand for `string` with `.format = .iso_date_time`; see `string` for the schema protocol.
 pub fn isoDateTime(comptime config: Config) type {
     return string(withFormat(config, .iso_date_time));
 }
 
+/// String schema validating an ISO 8601 duration.
+/// Shorthand for `string` with `.format = .iso_duration`; see `string` for the schema protocol.
 pub fn isoDuration(comptime config: Config) type {
     return string(withFormat(config, .iso_duration));
 }

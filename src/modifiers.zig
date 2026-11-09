@@ -15,6 +15,9 @@ const SchemaError = schema.SchemaError;
 const EncodeState = schema.EncodeState;
 const SchemaState = schema.SchemaState;
 
+/// Wraps `S` so its field may be absent from the parent object.
+/// `Value` is `?S.Value`; absent decodes as null and encodes as JSON null,
+/// while a present JSON null is a type mismatch.
 pub fn optional(comptime S: type) type {
     return struct {
         pub const Value = ?S.Value;
@@ -56,6 +59,8 @@ pub fn optional(comptime S: type) type {
     };
 }
 
+/// Wraps `S` so its value may be an explicit JSON null. `Value` is `?S.Value`;
+/// null decodes to null and encodes to null, while non-null delegates to `S`.
 pub fn nullable(comptime S: type) type {
     return struct {
         pub const Value = ?S.Value;
@@ -105,6 +110,154 @@ pub fn nullable(comptime S: type) type {
     };
 }
 
+/// Wraps `S` so its field may be absent or an explicit JSON null.
+/// `Value` is `?S.Value`; nullish accepts both absent and null,
+/// unlike `optional` and `nullable` which accept only one.
+pub fn nullish(comptime S: type) type {
+    return struct {
+        pub const Value = ?S.Value;
+        pub const Inner = S;
+        pub const kind = schema.Kind.optional;
+        pub const schema_name = "nullish";
+        pub const is_optional = true;
+        pub const has_default = false;
+
+        pub fn decode(state: *State, node: std.json.Value, path: []const u8) DecodeError!Value {
+            if (node == .null) return null;
+            return try S.decode(state, node, path);
+        }
+
+        pub fn decodeString(state: *State, raw: []const u8, path: []const u8) DecodeError!Value {
+            if (std.mem.eql(u8, raw, "null")) return null;
+            if (comptime schema.isScalar(S)) return try S.decodeString(state, raw, path);
+            return schema.failCode(state, .unsupported, path, null, "query-decodable schema");
+        }
+
+        pub fn check(state: *State, value: Value, path: []const u8) DecodeError!void {
+            if (value) |present| try S.check(state, present, path);
+        }
+
+        pub fn encode(state: *EncodeState, value: Value) EncodeError!void {
+            if (value) |present| try S.encode(state, present) else try state.json.write(null);
+        }
+
+        pub fn writeJsonSchema(state: *SchemaState) SchemaError!void {
+            try state.json.beginObject();
+            try state.json.objectField("anyOf");
+            try state.json.beginArray();
+            try S.writeJsonSchema(state);
+            try state.json.beginObject();
+            try state.json.objectField("type");
+            try state.json.write("null");
+            try state.json.endObject();
+            try state.json.endArray();
+            try state.json.endObject();
+        }
+    };
+}
+
+/// Annotation carrier for `meta`. `id`, `title`, and `description` map to
+/// JSON Schema keywords; examples, deprecated, and read/write-only flag emit conditionally.
+pub const Metadata = struct {
+    id: ?[]const u8 = null,
+    title: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    examples: []const []const u8 = &.{},
+    deprecated: bool = false,
+    read_only: bool = false,
+    write_only: bool = false,
+};
+
+/// Adds JSON Schema metadata while preserving all validation and encoding
+/// behaviour of the wrapped schema. Metadata is emitted through `allOf`, so the
+/// original constraints remain in force.
+pub fn meta(comptime S: type, comptime metadata: Metadata) type {
+    return struct {
+        pub const Value = S.Value;
+        pub const Inner = S;
+        pub const kind = schema.Kind.metadata;
+        pub const schema_name = "metadata";
+        pub const is_optional = schema.isOptional(S);
+        pub const has_default = schema.hasDefault(S);
+
+        pub fn defaultValue() Value {
+            return S.defaultValue();
+        }
+
+        pub fn decode(state: *State, node: std.json.Value, path: []const u8) DecodeError!Value {
+            return try S.decode(state, node, path);
+        }
+
+        pub fn decodeString(state: *State, raw: []const u8, path: []const u8) DecodeError!Value {
+            if (comptime schema.isScalar(S)) return try S.decodeString(state, raw, path);
+            return schema.failCode(state, .unsupported, path, null, "query-decodable schema");
+        }
+
+        pub fn check(state: *State, value: Value, path: []const u8) DecodeError!void {
+            try S.check(state, value, path);
+        }
+
+        pub fn encode(state: *EncodeState, value: Value) EncodeError!void {
+            try S.encode(state, value);
+        }
+
+        pub fn writeJsonSchema(state: *SchemaState) SchemaError!void {
+            try state.json.beginObject();
+            try state.json.objectField("allOf");
+            try state.json.beginArray();
+            try S.writeJsonSchema(state);
+            try state.json.endArray();
+            if (metadata.id) |id| {
+                try state.json.objectField(state.target.idKeyword());
+                try state.json.write(id);
+            }
+            if (metadata.title) |title| {
+                try state.json.objectField("title");
+                try state.json.write(title);
+            }
+            if (metadata.description) |description| {
+                try state.json.objectField("description");
+                try state.json.write(description);
+            }
+            if (metadata.examples.len > 0 and state.target.supportsExamples()) {
+                try state.json.objectField("examples");
+                try state.json.beginArray();
+                for (metadata.examples) |example| try state.json.write(example);
+                try state.json.endArray();
+            }
+            if (metadata.deprecated and state.target != .draft_07 and state.target != .draft_06 and state.target != .draft_05) {
+                try state.json.objectField("deprecated");
+                try state.json.write(true);
+            }
+            if (state.target.supportsReadWriteOnly()) {
+                if (metadata.read_only) {
+                    try state.json.objectField("readOnly");
+                    try state.json.write(true);
+                }
+                if (metadata.write_only) {
+                    try state.json.objectField("writeOnly");
+                    try state.json.write(true);
+                }
+            }
+            try state.json.endObject();
+        }
+    };
+}
+
+fn writeDefaultSchema(state: *SchemaState, comptime S: type, value: S.Value) SchemaError!void {
+    try state.json.beginObject();
+    try state.json.objectField("allOf");
+    try state.json.beginArray();
+    try S.writeJsonSchema(state);
+    try state.json.endArray();
+    try state.json.objectField("default");
+    var encode_state = EncodeState{ .allocator = state.arena, .json = state.json };
+    S.encode(&encode_state, value) catch return error.Unsupported;
+    try state.json.endObject();
+}
+
+/// Wraps `S` and supplies `default_value` when a field is absent.
+/// `Value` is `S.Value`; the default is returned by `defaultValue` and emitted as the `default` keyword.
 pub fn withDefault(comptime S: type, comptime default_value: S.Value) type {
     return struct {
         pub const Value = S.Value;
@@ -138,11 +291,14 @@ pub fn withDefault(comptime S: type, comptime default_value: S.Value) type {
         }
 
         pub fn writeJsonSchema(state: *SchemaState) SchemaError!void {
-            try S.writeJsonSchema(state);
+            try writeDefaultSchema(state, S, default_value);
         }
     };
 }
 
+/// Wraps `S` and supplies a default by calling `factory` when a field is absent.
+/// `Value` is `S.Value`; `defaultValue` invokes the factory on each access,
+/// so mutable defaults are refreshed.
 pub fn withDefaultFactory(comptime S: type, comptime factory: fn () S.Value) type {
     return struct {
         pub const Value = S.Value;
@@ -181,6 +337,8 @@ pub fn withDefaultFactory(comptime S: type, comptime factory: fn () S.Value) typ
     };
 }
 
+/// Wraps `S` and returns `value` when decoding fails. `Value` is `S.Value`;
+/// on `error.Reported` recorded issues are rolled back, while `OutOfMemory` propagates.
 pub fn fallback(comptime S: type, comptime value: S.Value) type {
     return struct {
         pub const Value = S.Value;
@@ -233,6 +391,8 @@ pub fn fallback(comptime S: type, comptime value: S.Value) type {
     };
 }
 
+/// Configuration for `refine`. `check` must return true for a value to pass;
+/// `message` is placed in the refinement failure issue.
 pub fn RefineConfig(comptime T: type) type {
     return struct {
         check: *const fn (T) bool,
@@ -240,6 +400,8 @@ pub fn RefineConfig(comptime T: type) type {
     };
 }
 
+/// Wraps `S` and requires `config.check` to hold for the decoded value.
+/// `Value` is `S.Value`; failure records a `refinement_failed` issue with `config.message`.
 pub fn refine(comptime S: type, comptime config: RefineConfig(S.Value)) type {
     return struct {
         pub const Value = S.Value;
@@ -289,6 +451,8 @@ pub fn refine(comptime S: type, comptime config: RefineConfig(S.Value)) type {
     };
 }
 
+/// Configuration for `transform`. `decode` maps `In` to the callback payload (`Out`);
+/// optional `encode` and `check` enable reversible encoding and output validation.
 pub fn TransformConfig(comptime In: type, comptime Out: type) type {
     return struct {
         decode: *const fn (std.mem.Allocator, In) anyerror!Out,
@@ -298,12 +462,9 @@ pub fn TransformConfig(comptime In: type, comptime Out: type) type {
     };
 }
 
-/// A typed transformation from the schema's decoded input to a new output.
-///
-/// `decode` is required. `encode` makes the transformation reversible so the
-/// output can be serialized again; `check` validates an existing output. A
-/// transformation without `encode` cannot be serialized or re-checked and
-/// reports `error.Unsupported` instead of silently dropping data.
+/// Decodes `S`, then applies `config.decode` to produce `Value`. `Value` is the
+/// callback payload type; without `encode` the result cannot be re-encoded
+/// and `encode` reports `error.Unsupported`.
 pub fn transform(comptime S: type, comptime config: anytype) type {
     const ConfigType = @TypeOf(config);
     const DecodeInfo = @typeInfo(@TypeOf(config.decode)).@"fn";
@@ -411,6 +572,82 @@ pub fn transform(comptime S: type, comptime config: anytype) type {
     };
 }
 
+/// Configuration for `codec`. `decode` maps `In.Value` to `Out.Value`;
+/// `encode` maps the reverse direction. Both receive the arena allocator.
+pub fn CodecConfig(comptime In: type, comptime Out: type) type {
+    return struct {
+        decode: *const fn (std.mem.Allocator, In.Value) anyerror!Out.Value,
+        encode: *const fn (std.mem.Allocator, Out.Value) anyerror!In.Value,
+        message: []const u8 = "value could not be encoded or decoded",
+    };
+}
+
+/// Validates with `InputSchema`, maps via `config.decode`, then validates with `OutputSchema`.
+/// `Value` is `OutputSchema.Value`; encoding reverses the mapping and serializes through `InputSchema`.
+pub fn codec(comptime InputSchema: type, comptime OutputSchema: type, comptime config: anytype) type {
+    const DecodeInfo = @typeInfo(@TypeOf(config.decode)).@"fn";
+    const EncodeInfo = @typeInfo(@TypeOf(config.encode)).@"fn";
+    comptime {
+        if (DecodeInfo.param_types.len != 2 or DecodeInfo.param_types[0] != std.mem.Allocator or DecodeInfo.param_types[1] != InputSchema.Value) {
+            @compileError("codec.decode must be fn (Allocator, Input.Value) error!Output.Value");
+        }
+        if (EncodeInfo.param_types.len != 2 or EncodeInfo.param_types[0] != std.mem.Allocator or EncodeInfo.param_types[1] != OutputSchema.Value) {
+            @compileError("codec.encode must be fn (Allocator, Output.Value) error!Input.Value");
+        }
+    }
+
+    const failure_message = if (@hasField(@TypeOf(config), "message")) config.message else "value could not be encoded or decoded";
+
+    return struct {
+        pub const Value = OutputSchema.Value;
+        pub const Input = InputSchema;
+        pub const OutputSchemaType = OutputSchema;
+        pub const kind = schema.Kind.transform;
+        pub const schema_name = "codec";
+        pub const is_optional = false;
+        pub const has_default = false;
+
+        pub fn decode(state: *State, node: std.json.Value, path: []const u8) DecodeError!Value {
+            const input = try InputSchema.decode(state, node, path);
+            const output = config.decode(state.arena, input) catch |err| {
+                if (err == error.OutOfMemory) return error.OutOfMemory;
+                return schema.fail(state, error.TransformFailed, path, null, failure_message);
+            };
+            try OutputSchema.check(state, output, path);
+            return output;
+        }
+
+        pub fn decodeString(state: *State, raw: []const u8, path: []const u8) DecodeError!Value {
+            if (comptime !schema.isScalar(InputSchema)) return schema.failCode(state, .unsupported, path, null, "query-decodable input schema");
+            const input = try InputSchema.decodeString(state, raw, path);
+            const output = config.decode(state.arena, input) catch |err| {
+                if (err == error.OutOfMemory) return error.OutOfMemory;
+                return schema.fail(state, error.TransformFailed, path, null, failure_message);
+            };
+            try OutputSchema.check(state, output, path);
+            return output;
+        }
+
+        pub fn check(state: *State, value: Value, path: []const u8) DecodeError!void {
+            try OutputSchema.check(state, value, path);
+        }
+
+        pub fn encode(state: *EncodeState, value: Value) EncodeError!void {
+            const input = config.encode(state.allocator, value) catch |err| {
+                if (err == error.OutOfMemory) return error.OutOfMemory;
+                return error.TransformFailed;
+            };
+            try InputSchema.encode(state, input);
+        }
+
+        pub fn writeJsonSchema(state: *SchemaState) SchemaError!void {
+            try InputSchema.writeJsonSchema(state);
+        }
+    };
+}
+
+/// Wraps the type returned by `get()` via a deferred thunk for recursive schemas.
+/// `Value` is `*const Inner.Value` allocated in the arena; decoding enters a depth-guarded inner decode.
 pub fn lazy(comptime get: fn () type) type {
     return struct {
         pub const Inner = get();
@@ -442,21 +679,31 @@ pub fn lazy(comptime get: fn () type) type {
             const key = try state.definitionFor(Inner);
             try state.json.beginObject();
             try state.json.objectField("$ref");
-            try state.json.write(std.fmt.allocPrint(state.arena, "#/$defs/{s}", .{key}) catch return error.OutOfMemory);
+            try state.json.write(std.fmt.allocPrint(state.arena, "{s}{s}", .{ state.target.refPrefix(), key }) catch return error.OutOfMemory);
             try state.json.endObject();
         }
     };
 }
 
+/// Configuration for `custom`. At least one of `check` (simple predicate)
+/// or `validate` (issue-recording validator) must be set; `message` is used for predicate failures.
 pub fn CustomConfig(comptime T: type) type {
     return struct {
-        check: *const fn (T) bool,
+        check: ?*const fn (T) bool = null,
+        validate: ?*const fn (*schema.Context, T) schema.DecodeError!void = null,
         message: []const u8 = "value failed a custom check",
     };
 }
 
-/// A check-only schema for values that have no JSON representation of their own.
+/// Check-only schema for values with no JSON representation of their own. `Value` is `T`;
+/// supply `check` or `validate`, where `validate` records issues on the context and must return normally.
 pub fn custom(comptime T: type, comptime config: CustomConfig(T)) type {
+    comptime {
+        if (config.check == null and config.validate == null) {
+            @compileError("custom requires a check or validate callback");
+        }
+    }
+
     return struct {
         pub const Value = T;
         pub const custom_message = config.message;
@@ -471,7 +718,14 @@ pub fn custom(comptime T: type, comptime config: CustomConfig(T)) type {
         }
 
         pub fn check(state: *State, value: Value, path: []const u8) DecodeError!void {
-            if (!config.check(value)) {
+            if (config.validate) |validate_fn| {
+                const before = state.issues.count();
+                var context = schema.Context{ .state = state, .path = path };
+                try validate_fn(&context, value);
+                if (state.issues.count() > before) return error.Reported;
+                return;
+            }
+            if (!config.check.?(value)) {
                 return schema.failMessage(state, .refinement_failed, path, custom_message, null, custom_message);
             }
         }
@@ -574,6 +828,34 @@ test "transform changes the value type" {
     try Doubled.check(&state, 42, "n");
 }
 
+test "nullish accepts absence or null and metadata is additive" {
+    const allocator = std.testing.allocator;
+    const string = @import("string.zig");
+    var list = try schema.IssueList.init(allocator, .{});
+    defer list.deinit();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var state = State{ .arena = arena.allocator(), .issues = &list };
+
+    const MaybeName = nullish(string.string(.{}));
+    try std.testing.expect(null == try MaybeName.decode(&state, .null, "name"));
+    try std.testing.expectEqualStrings("Ada", (try MaybeName.decode(&state, .{ .string = "Ada" }, "name")).?);
+
+    const Name = meta(string.string(.{}), .{
+        .title = "Display name",
+        .examples = &.{ "Ada", "Grace" },
+        .read_only = true,
+    });
+    try std.testing.expectEqualStrings("Ada", try Name.decode(&state, .{ .string = "Ada" }, "name"));
+    try Name.check(&state, "Ada", "name");
+
+    const document = try @import("json_schema.zig").generate(Name, allocator, .{});
+    defer allocator.free(document);
+    try std.testing.expect(std.mem.indexOf(u8, document, "\"title\":\"Display name\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, document, "\"readOnly\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, document, "\"allOf\"") != null);
+}
+
 test "custom runs its predicate during typed validation" {
     const allocator = std.testing.allocator;
     var list = try schema.IssueList.init(allocator, .{});
@@ -596,4 +878,15 @@ test "custom runs its predicate during typed validation" {
     try std.testing.expectError(error.Reported, Positive.check(&state, -1, "count"));
     try std.testing.expectEqualStrings("E012", list.last().?.code.label());
     try std.testing.expectEqualStrings("must be positive", list.last().?.message);
+
+    const Ranged = custom(i32, .{
+        .validate = struct {
+            fn validate(ctx: *schema.Context, value: i32) schema.DecodeError!void {
+                if (value < 0) try ctx.addIssue(.too_small, "must not be negative");
+                if (value > 100) try ctx.addIssue(.too_large, "must not exceed 100");
+            }
+        }.validate,
+    });
+    try std.testing.expectError(error.Reported, Ranged.check(&state, -1, "count"));
+    try std.testing.expectEqualStrings("must not be negative", list.last().?.message);
 }
