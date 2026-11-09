@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install zigantic 0.0.4 with zig fetch from the release tarball or the nightly Git URL, and wire the module into build.zig.
+description: Install zigantic 0.0.5 with zig fetch from the release tarball or the nightly Git URL, and wire the module into build.zig.
 keywords: zigantic install, zig fetch, zig build.zig, zig package, zig 0.17 dependency
 ---
 
@@ -11,7 +11,7 @@ Requires Zig **0.17.0** or newer.
 ## Release installation (recommended)
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.4.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.5.tar.gz
 ```
 
 ## Nightly installation

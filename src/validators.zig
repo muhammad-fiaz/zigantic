@@ -107,6 +107,12 @@ pub fn isUrl(text: []const u8) bool {
     return hasHost(uri);
 }
 
+/// Absolute URI with a valid scheme. A host is not required, so `urn:isbn:...`
+/// and `mailto:...` are accepted.
+pub fn isUri(text: []const u8) bool {
+    return parseUrl(text) != null;
+}
+
 pub fn isHttpsUrl(text: []const u8) bool {
     const uri = parseUrl(text) orelse return false;
     return std.mem.eql(u8, uri.scheme, "https") and hasHost(uri);
@@ -471,6 +477,9 @@ test "url validation" {
     try std.testing.expect(!isUrl("1http://example.com"));
     try std.testing.expect(isHttpsUrl("https://example.com"));
     try std.testing.expect(!isHttpsUrl("http://example.com"));
+    try std.testing.expect(isUri("urn:isbn:0451450523"));
+    try std.testing.expect(isUri("mailto:ada@example.com"));
+    try std.testing.expect(!isUri("relative/path"));
 }
 
 test "identifiers" {

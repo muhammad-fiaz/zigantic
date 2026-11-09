@@ -69,9 +69,9 @@ Break the document on purpose, for example by changing the postal code to
 `"AB12"`, and the same program prints:
 
 ```text
-error[E005]: invalid value
+error[E004]: invalid length
   $.address.postal_code
-    expected: numeric text
+    expected: exactly 5 characters
     received: "AB12"
 ```
 

@@ -7,11 +7,8 @@
 const std = @import("std");
 const schema = @import("schema.zig");
 
-/// Checks `value` against `S` and returns the issues found.
-///
-/// The returned list owns copies of every path, message and diagnostic, so it
-/// stays valid after the temporary path arena is released. The caller frees it
-/// with `deinit`, exactly like a parse result.
+/// Validates a typed `value` against `S` and returns an owning issue list.
+/// The list copies paths, messages, and diagnostics and must be freed with `deinit`; it is empty when valid. Returns `OutOfMemory` on allocation failure.
 pub fn validate(
     comptime S: type,
     allocator: std.mem.Allocator,
@@ -41,6 +38,34 @@ pub fn validate(
     return issues;
 }
 
+/// Allocation-free first-error validation using caller-supplied `buffer` as scratch space.
+/// Path construction uses `buffer`, so even valid values require a usable buffer; too small a buffer returns `OutOfMemory`. The returned issue borrows `buffer`.
+pub fn checkFirst(
+    comptime S: type,
+    value: S.Value,
+    buffer: []u8,
+    options: schema.Options,
+) error{OutOfMemory}!?schema.Issue {
+    var fixed = std.heap.FixedBufferAllocator.init(buffer);
+    var issues = schema.IssueList.init(fixed.allocator(), .{ .capacity = 1 }) catch return error.OutOfMemory;
+
+    var state = schema.State{
+        .arena = fixed.allocator(),
+        .issues = &issues,
+        .options = options,
+    };
+    if (options.hooks.on_start) |hook| hook(S.schema_name);
+    S.check(&state, value, "$") catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Reported => {
+            if (options.hooks.on_finish) |hook| hook(false, issues.count());
+            return issues.first();
+        },
+    };
+    if (options.hooks.on_finish) |hook| hook(true, 0);
+    return null;
+}
+
 test "validate returns an owning issue list" {
     const allocator = std.testing.allocator;
     const number = @import("number.zig");
@@ -55,4 +80,20 @@ test "validate returns an owning issue list" {
     defer rejected.deinit();
     try std.testing.expectEqual(@as(usize, 1), rejected.count());
     try std.testing.expectEqualStrings("$", rejected.first().?.path);
+}
+
+test "checkFirst uses caller scratch memory" {
+    const number = @import("number.zig");
+    const Age = number.integer(u8, .{ .min = 18 });
+    var buffer: [4096]u8 = undefined;
+
+    try std.testing.expect((try checkFirst(Age, 30, &buffer, .{})) == null);
+    const issue = (try checkFirst(Age, 10, &buffer, .{})).?;
+    try std.testing.expectEqualStrings("E002", issue.code.label());
+    try std.testing.expectEqualStrings("$", issue.path);
+
+    var tiny: [1]u8 = undefined;
+    try std.testing.expectError(error.OutOfMemory, checkFirst(Age, 10, &tiny, .{}));
+    // Path machinery also uses the buffer, so even a valid value can fail.
+    try std.testing.expectError(error.OutOfMemory, checkFirst(Age, 30, &tiny, .{}));
 }

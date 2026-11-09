@@ -26,8 +26,7 @@ const InventorySchema = z.object(Inventory, .{
 
 Array options are `min`, `max`, `len`, `unique` and `description`. Record
 options are `min`, `max`, `key_min`, `key_max` and `description`, where the
-length limits count entries and the key limits bound each key's character
-count.
+length limits count entries and the key limits bound each key's byte length.
 
 ## The program
 
@@ -58,6 +57,16 @@ pub fn main() !void {
     , .{});
     defer duplicate.deinit();
     std.debug.print("duplicate tags accepted: {any}\n", .{duplicate.ok()});
+
+    const Point = z.fixedArray(z.float(f64, .{}), 2, .{});
+    var point = try z.parse(Point, allocator, "[1.5,2.5]", .{});
+    defer point.deinit();
+    if (point.value) |coords| std.debug.print("point: {d},{d}\n", .{ coords[0], coords[1] });
+
+    const Tags = z.set(z.string(.{ .min = 1 }), .{});
+    var tags = try z.parse(Tags, allocator, "[\"fast\",\"safe\"]", .{});
+    defer tags.deinit();
+    std.debug.print("set accepted: {any}\n", .{tags.ok()});
 }
 ```
 
@@ -68,6 +77,8 @@ pub fn main() !void {
   ada: 95
   grace: 99
 duplicate tags accepted: false
+point: 1.5,2.5
+set accepted: true
 ```
 
 ## What to notice

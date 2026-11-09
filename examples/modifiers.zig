@@ -16,7 +16,10 @@ const evenTimeout = struct {
 
 const SettingsSchema = z.object(Settings, .{
     .retries = z.withDefault(z.integer(u8, .{ .max = 10 }), 3),
-    .label = z.optional(z.string(.{ .min = 1 })),
+    .label = z.optional(z.meta(z.string(.{ .min = 1 }), .{
+        .title = "Deployment label",
+        .description = "Optional human-readable label",
+    })),
     .timeout = z.refine(z.integer(u16, .{ .min = 100 }), .{
         .check = evenTimeout,
         .message = "timeout must be an even number of milliseconds",
@@ -57,4 +60,24 @@ pub fn main() !void {
     }, .{});
     defer issues.deinit();
     std.debug.print("typed check: {any}\n", .{issues.isEmpty()});
+
+    const Count = z.codec(z.string(.{}), z.integer(u32, .{ .max = 100 }), .{
+        .decode = struct {
+            fn apply(_: std.mem.Allocator, text: []const u8) !u32 {
+                return std.fmt.parseInt(u32, text, 10);
+            }
+        }.apply,
+        .encode = struct {
+            fn apply(pool: std.mem.Allocator, value: u32) ![]const u8 {
+                return std.fmt.allocPrint(pool, "{d}", .{value});
+            }
+        }.apply,
+    });
+    var count = try z.parse(Count, allocator, "\"42\"", .{});
+    defer count.deinit();
+    if (count.value) |value| {
+        const text = try z.stringify(Count, allocator, value, .{});
+        defer allocator.free(text);
+        std.debug.print("codec: {d} -> {s}\n", .{ value, text });
+    }
 }

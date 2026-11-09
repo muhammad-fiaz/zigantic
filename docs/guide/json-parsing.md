@@ -40,8 +40,9 @@ var result = try z.parse(UserSchema, allocator, input, .{
 (the default) reports `E009` at the exact nested path, `.first` keeps the first
 occurrence and `.last` keeps the last. The duplicate scan happens before
 decoding, so `{"a":{"b":1,"b":2}}` reports `$.a.b`. `.coerce` additionally
-accepts strings for numbers, booleans and null in JSON documents; query
-transports always enable it.
+accepts numbers, booleans and `null` as their text forms (`"42"`, `"true"`,
+`"null"`) and numbers and booleans as strings (`42`, `true` for a string field),
+in JSON documents; query transports always enable it.
 
 ## Query strings and forms
 
@@ -83,6 +84,10 @@ Repeated keys are the query encoding for arrays, so they are not affected by
 `Options.duplicates`. A key with one value still produces a one-element array
 for an array field.
 
+`multipart/form-data` is not parsed. Its boundary framing, filename metadata and
+file ownership rules need a streaming API that this release does not define;
+use `parseForm` for URL-encoded bodies and decode uploaded files separately.
+
 ## JSON Schema
 
 ```zig
@@ -109,3 +114,6 @@ if (!issues.isEmpty()) {
 
 `validate` runs the same constraints against a value that is already typed and
 returns the owning issue list directly. No session object is needed.
+
+For a first error without heap allocation, pass caller scratch memory to
+`z.checkFirst`. The returned issue borrows that buffer.

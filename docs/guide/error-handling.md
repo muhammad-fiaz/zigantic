@@ -27,7 +27,7 @@ useful.
 
 | Code | Name | Category |
 | --- | --- | --- |
-| `E001` | `type_mismatch` | type |
+| `E001` | `type_mismatch` | type_mismatch |
 | `E002` | `too_small` | length |
 | `E003` | `too_large` | length |
 | `E004` | `length_mismatch` | length |
@@ -44,13 +44,30 @@ useful.
 | `E015` | `union_mismatch` | structure |
 | `E016` | `out_of_range` | length |
 | `E017` | `not_finite` | range |
-| `E018` | `not_integer` | type |
+| `E018` | `not_integer` | type_mismatch |
 | `E019` | `missing_discriminator` | structure |
 | `E020` | `invalid_discriminator` | structure |
 | `E021` | `unsupported` | unsupported |
 
 `z.Code` exposes `label()`, `category()` and `message()`. Default messages and
 the full table are also in the [API reference](/api/reference#error-codes).
+
+## Allocation-free first errors
+
+`z.checkFirst(S, value, buffer, .{})` checks an already-typed value and returns
+`?Issue` using caller-provided scratch memory. It allocates nothing from the
+heap when the buffer is large enough; check machinery (paths, quoted values)
+also writes into the buffer, so even a valid value needs a realistically sized
+buffer — a too-small buffer returns `error.OutOfMemory`. The returned issue
+points into `buffer`, so it remains valid only while that buffer lives. Use
+`z.validate` when you need owning, multiple or rendered issues.
+
+```zig
+var scratch: [4096]u8 = undefined;
+if (try z.checkFirst(UserSchema, user, &scratch, .{})) |issue| {
+    std.debug.print("{s} at {s}\n", .{ issue.code.label(), issue.path });
+}
+```
 
 ## Rendering
 

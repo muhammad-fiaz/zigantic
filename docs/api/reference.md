@@ -25,16 +25,20 @@ functions taking an allocator before the value and options last.
 | `z.parseQuery(S, allocator, input, .{})` | `ParseResult(S)` | query string for object schemas, including `a[b]` paths. |
 | `z.parseForm(S, allocator, input, .{})` | `ParseResult(S)` | `application/x-www-form-urlencoded` body. |
 | `z.stringifyQuery(S, allocator, value, .{})` | owned `[]u8` | object schema to a nested query string. |
-| `z.jsonSchema(S, allocator, .{})` | owned `[]u8` | JSON Schema document with root `$ref` and `$defs`. |
+| `z.jsonSchema(S, allocator, .{ .target = .draft_2020_12 })` | owned `[]u8` | JSON Schema document with a root `$ref` and definitions. |
 | `z.validate(S, allocator, value, .{})` | `IssueList` | checks an already-typed value. |
+| `z.checkFirst(S, value, buffer, .{})` | `?Issue` | first-error validation using caller scratch memory. |
+
+Most services take an allocator; `checkFirst` is the exception and takes a
+caller-provided scratch buffer instead.
 
 `parse`, `parseQuery` and `parseForm` can return `error.InvalidJson` (malformed
 JSON or percent-encoding) and `error.OutOfMemory`. Schema violations are issues
 inside the result, not errors. `stringify` can return `error.Unsupported` for
-schemas without an encoder, `error.TransformFailed` when a transform's
-`.encode` callback fails, and allocator or writer errors. `jsonSchema` can
-return `error.Unsupported` for custom schemas, which have no external
-representation.
+schemas without an encoder, `error.TransformFailed` when a transform or codec
+callback fails, and allocator or writer errors. `jsonSchema` can return
+`error.Unsupported` for custom schemas, which have no external representation.
+`checkFirst` returns `error.OutOfMemory` when the scratch buffer is too small.
 
 ### `ParseResult(S)`
 
@@ -68,7 +72,7 @@ A schema is a type with these declarations:
 | `is_optional` | `bool` | may be absent from an object |
 | `has_default` | `bool` | supplies a default when absent |
 | `decode(state, node, path)` | `DecodeError!Value` | JSON to value |
-| `decodeString(state, raw, path)` | `DecodeError!Value` | text to value for query decoding |
+| `decodeString(state, raw, path)` | `DecodeError!Value` | text to value; only schemas with a text form provide it. Query decoding itself builds a synthetic JSON value and calls `decode`. |
 | `check(state, value, path)` | `DecodeError!void` | validate a typed value |
 | `encode(state, value)` | `EncodeError!void` | value to JSON |
 | `writeJsonSchema(state)` | `SchemaError!void` | describe the schema |
@@ -90,8 +94,10 @@ map that omits a union field is a build error.
 z.string(.{})
 z.email(.{})
 z.url(.{})
+z.uri(.{})
 z.httpsUrl(.{})
 z.uuid(.{})
+z.guid(.{})
 z.ulid(.{})
 z.slug(.{})
 z.semver(.{})
@@ -109,6 +115,9 @@ z.isoDate(.{})
 z.isoTime(.{})
 z.isoDateTime(.{})
 z.isoDuration(.{})
+z.date(.{})
+z.time(.{})
+z.dateTime(.{})
 ```
 
 All of them accept `z.StringConfig`:
@@ -136,9 +145,14 @@ the format constructors and is not usually assigned directly.
 z.integer(T, .{})
 z.float(T, .{})
 z.positiveInt(T, .{})
+z.negativeInt(T, .{})
 z.nonNegativeInt(T, .{})
+z.nonPositiveInt(T, .{})
+z.safeInt(T, .{})
+z.unsignedInt(T, .{})
 z.percentage(T, .{})
 z.probability(T, .{})
+z.bytes(.{})
 ```
 
 `z.IntConfig`:
@@ -147,6 +161,8 @@ z.probability(T, .{})
 | --- | --- | --- | --- |
 | `min` | `?comptime_int` | `null` | inclusive minimum |
 | `max` | `?comptime_int` | `null` | inclusive maximum |
+| `exclusive_min` | `?comptime_int` | `null` | exclusive minimum |
+| `exclusive_max` | `?comptime_int` | `null` | exclusive maximum |
 | `even` | `bool` | `false` | require an even value |
 | `multiple_of` | `?comptime_int` | `null` | require a multiple |
 | `description` | `[]const u8` | `""` | JSON Schema description |
@@ -157,15 +173,26 @@ z.probability(T, .{})
 | --- | --- | --- | --- |
 | `min` | `?comptime_float` | `null` | inclusive minimum |
 | `max` | `?comptime_float` | `null` | inclusive maximum |
+| `exclusive_min` | `?comptime_float` | `null` | exclusive minimum |
+| `exclusive_max` | `?comptime_float` | `null` | exclusive maximum |
 | `finite` | `bool` | `true` | reject NaN and infinities |
 | `description` | `[]const u8` | `""` | JSON Schema description |
 
 The helpers are constraint presets that still accept the same config:
 
 - `positiveInt` sets `min` to at least `1`.
+- `negativeInt` sets `max` to at most `-1`.
 - `nonNegativeInt` sets `min` to at least `0`.
+- `nonPositiveInt` sets `max` to at most `0`.
+- `safeInt` bounds the value to the IEEE-754 safe integer range.
+- `unsignedInt` requires an unsigned type at compile time.
 - `percentage` bounds a float to `0..100`.
 - `probability` bounds a float to `0..1`.
+
+`z.bytes(.{})` returns `[]const u8` decoded from standard base64, unpadded
+base64url, hexadecimal text or a JSON byte array. Its config is
+`z.BytesConfig { encoding: z.ByteEncoding, min, max, len, description }`;
+lengths refer to decoded bytes. Decoded storage belongs to the result arena.
 
 ### Primitives
 
@@ -190,10 +217,18 @@ z.object(T, .{
 z.objectOf(.{
     .field = Schema,
 }, .{})
+
+z.merge(FirstSchema, SecondSchema, .{})
+z.extend(FirstSchema, SecondSchema, .{})
+z.pick(ObjectSchema, &.{"field"}, .{})
+z.omit(ObjectSchema, &.{"field"}, .{})
 ```
 
 `z.object` binds to a declared Zig type. `z.objectOf` infers the struct with
 `@Struct`; its `Value` is the synthesized type. Both accept `z.ObjectConfig`.
+`merge` and `extend` combine the `.fields` of two inferred objects and reject
+duplicate field names at compile time. `pick` selects existing fields; `omit`
+removes named fields and ignores unknown omissions.
 
 `z.ObjectConfig`:
 
@@ -217,6 +252,8 @@ Rules:
 
 ```zig
 z.array(S, .{})
+z.fixedArray(S, N, .{})
+z.set(S, .{})
 z.record(S, .{})
 ```
 
@@ -240,8 +277,11 @@ z.record(S, .{})
 | `key_max` | `usize` | `256` |
 | `description` | `[]const u8` | `""` |
 
-`z.array` produces `[]const S.Value`; `z.record` produces
-`std.array_hash_map.String(S.Value)`.
+`z.array` and `z.set` produce `[]const S.Value`; `z.fixedArray` produces
+`[N]S.Value`; `z.record` produces `std.array_hash_map.String(S.Value)`.
+`z.set` uses `z.ArrayConfig` and always sets `unique = true`. `z.fixedArray`
+uses `z.FixedConfig`, which contains only `description`; its length is the `N`
+parameter, not a config option.
 
 ### Tuples and intersections
 
@@ -269,7 +309,8 @@ z.discriminatedUnion(U, "type", .{ .variant = Schema }, .{})
 ```
 
 `z.UnionConfig` and `z.DiscriminatedConfig` both contain only `description`.
-Variant names must match the union fields and payload types.
+Variant names must match the union fields and payload types. Every field of
+the union must have a variant schema; a missing variant is a build error.
 
 ### Modifiers
 
@@ -277,13 +318,19 @@ Variant names must match the union fields and payload types.
 | --- | --- | --- |
 | `z.optional(S)` | `?S.Value` | absent key; rejects explicit `null` |
 | `z.nullable(S)` | `?S.Value` | accepts explicit `null` |
+| `z.nullish(S)` | `?S.Value` | accepts an absent key or explicit `null` |
 | `z.withDefault(S, value)` | `S.Value` | compile-time default |
 | `z.withDefaultFactory(S, factory)` | `S.Value` | `fn () S.Value` |
 | `z.fallback(S, value)` | `S.Value` | value used when decoding fails |
 | `z.refine(S, .{ .check, .message })` | `S.Value` | `fn (S.Value) bool` |
 | `z.transform(S, .{ .decode, .encode, .check })` | decode payload | reversible typed conversion |
+| `z.codec(Input, Output, .{ .decode, .encode })` | `Output.Value` | validated input/output conversion |
+| `z.meta(S, .{...})` | `S.Value` | JSON Schema metadata only |
 | `z.lazy(get)` | `*const Inner.Value` | `fn () type` |
-| `z.custom(T, .{ .check, .message })` | `T` | typed checks only; a failed check is `E012` |
+| `z.custom(T, .{ .check, .validate, .message })` | `T` | typed checks only; a failed check is `E012` |
+
+`z.Metadata` fields: `id`, `title`, `description` (`?[]const u8`), `examples`
+(`[]const []const u8`), `deprecated`, `read_only`, `write_only` (`bool`).
 
 `z.RefineConfig(T)`:
 
@@ -296,11 +343,15 @@ Variant names must match the union fields and payload types.
 
 | Field | Type | Default |
 | --- | --- | --- |
-| `check` | `*const fn (T) bool` | required |
+| `check` | `?*const fn (T) bool` | `null` |
+| `validate` | `?*const fn (*z.Context, T) z.DecodeError!void` | `null` |
 | `message` | `[]const u8` | `"value failed a custom check"` |
 
-`z.TransformConfig(In, Out)`:
+At least one of `check` or `validate` must be supplied. When both are set,
+`validate` runs and `check` is ignored. `validate` may record
+several issues through the context and may return `error.OutOfMemory`.
 
+`z.TransformConfig(In, Out)`:
 | Field | Type | Default |
 | --- | --- | --- |
 | `decode` | `*const fn (Allocator, In.Value) anyerror!Out` | required |
@@ -311,6 +362,18 @@ Variant names must match the union fields and payload types.
 Supplying `encode` makes `z.stringify` possible. Without `encode`, `encode`
 returns `error.Unsupported`. Without either `encode` or `check`, `check` also
 returns `error.Unsupported`.
+
+`z.CodecConfig(In, Out)` requires both directions:
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `decode` | `*const fn (Allocator, In.Value) anyerror!Out.Value` | required |
+| `encode` | `*const fn (Allocator, Out.Value) anyerror!In.Value` | required |
+| `message` | `[]const u8` | `"value could not be encoded or decoded"` |
+
+A codec validates `Input.Value` before decoding, validates `Output.Value` after
+decoding, and serializes through the input schema on encode. The input schema
+also supplies the generated JSON Schema.
 
 ## Date and time
 
@@ -326,6 +389,10 @@ returns `error.Unsupported`.
 Time-zone database transitions are not modelled. The `z.datetime` module also
 exports `isLeapYear` and `daysInMonth`.
 
+`z.date(.{})`, `z.time(.{})` and `z.dateTime(.{})` are string schemas that
+decode into `z.Date`, `z.Time` and `z.DateTime`. Their config is
+`z.TemporalConfig { description }`; they never allocate.
+
 ## Options
 
 `z.Options` is shared by `parse`, `parseQuery`, `parseForm` and `validate`:
@@ -333,13 +400,26 @@ exports `isLeapYear` and `daysInMonth`.
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `unknown_fields` | `?z.UnknownFields` | `null` | per-call override of the object policy |
-| `coerce` | `bool` | `false` | accept strings for numbers and booleans in JSON |
+| `coerce` | `bool` | `false` | allow scalars as text (and text as numbers or booleans) in JSON; always on for query transports |
 | `duplicates` | `z.Duplicates` | `.reject` | `.reject`, `.first` or `.last` for repeated JSON keys |
 | `messages` | `z.Messages` | all `null` | per-code message overrides |
 | `max_depth` | `usize` | `128` | nesting limit for objects, arrays and lazy nodes |
 | `hooks` | `z.Hooks` | all `null` | lifecycle callbacks |
 
-`z.EncodeOptions` (used by `stringify`; accepted but currently unused by `jsonSchema`):
+`z.JsonSchemaOptions` (used by `jsonSchema`):
+
+| Field | Type | Default |
+| --- | --- | --- |
+| `target` | `z.JsonSchemaTarget` | `.draft_2020_12` |
+
+`z.JsonSchemaTarget` has `.draft_2020_12`, `.draft_2019_09`, `.draft_07`,
+`.draft_06` and `.draft_05`. The 2019-09 and 2020-12 targets use `$defs` and
+`#/$defs/...`; older drafts use `definitions` and `#/definitions/...`. Draft
+2020-12 uses `prefixItems`; earlier drafts use the tuple form of `items` plus
+`additionalItems: false`. Draft 5 uses boolean exclusive bounds and a
+one-element `enum` instead of `const`.
+
+`z.EncodeOptions` (used by `stringify`):
 
 | Field | Type | Default |
 | --- | --- | --- |
@@ -411,7 +491,7 @@ by the list.
 
 | Code | Name | Category | Default message |
 | --- | --- | --- | --- |
-| `E001` | `type_mismatch` | type | invalid type |
+| `E001` | `type_mismatch` | type_mismatch | invalid type |
 | `E002` | `too_small` | length | value is too small |
 | `E003` | `too_large` | length | value is too large |
 | `E004` | `length_mismatch` | length | invalid length |
@@ -428,7 +508,7 @@ by the list.
 | `E015` | `union_mismatch` | structure | value does not match any union variant |
 | `E016` | `out_of_range` | length | value is outside the allowed range |
 | `E017` | `not_finite` | range | value must be finite |
-| `E018` | `not_integer` | type | value must be an integer |
+| `E018` | `not_integer` | type_mismatch | value must be an integer |
 | `E019` | `missing_discriminator` | structure | discriminator field is missing |
 | `E020` | `invalid_discriminator` | structure | discriminator selects an unknown variant |
 | `E021` | `unsupported` | unsupported | operation is not supported by this schema |
@@ -457,7 +537,7 @@ Aliases add accepted input keys. Encoding always uses the canonical key.
 `z.validators` exposes pure, allocation-free predicates taking `[]const u8`:
 
 ```zig
-isEmail, isUrl, isHttpsUrl, isUuid, isUlid, isSlug, isSemver,
+isEmail, isUrl, isUri, isHttpsUrl, isUuid, isUlid, isSlug, isSemver,
 isPhoneNumber, luhn, isCreditCard, isBase64, isBase64Url, isHex,
 isHexColor, isMacAddress, isJwt, isIpv4, isIpv6, isIsoDate,
 isIsoTime, isIsoDateTime, isIsoDuration
@@ -477,9 +557,12 @@ normalises separators and then calls it.
 | `z.State` | decode state passed to schemas |
 | `z.UnknownFields` | `.reject` / `.strip` |
 | `z.Duplicates` | `.reject` / `.first` / `.last` |
-| `z.ObjectConfig`, `z.ArrayConfig`, `z.RecordConfig` | object and collection configuration |
+| `z.ObjectConfig`, `z.ArrayConfig`, `z.RecordConfig`, `z.FixedConfig` | object and collection configuration |
 | `z.TupleConfig`, `z.IntersectionConfig` | tuple and intersection configuration |
-| `z.RefineConfig`, `z.TransformConfig`, `z.CustomConfig` | modifier configuration |
+| `z.UnionConfig`, `z.DiscriminatedConfig` | union configuration |
+| `z.RefineConfig`, `z.TransformConfig`, `z.CodecConfig`, `z.CustomConfig` | modifier configuration |
+| `z.Metadata` | `z.meta` metadata fields |
+| `z.Context`, `z.State`, `z.Hooks`, `z.Options` | validation plumbing |
 | `z.Capability` | tint colour capability |
 | `z.Date`, `z.Time`, `z.DateTime`, `z.Weekday` | civil date/time arithmetic |
 | `z.datetime` | `isLeapYear`, `daysInMonth` and the date/time types |

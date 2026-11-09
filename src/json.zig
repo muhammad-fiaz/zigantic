@@ -8,8 +8,11 @@
 const std = @import("std");
 const schema = @import("schema.zig");
 
+/// Errors returned by JSON entry points: `InvalidJson` for unparsable input, `OutOfMemory` for allocation failure.
 pub const Error = error{ InvalidJson, OutOfMemory };
 
+/// Owning decode result for schema `S`.
+/// The result owns its arena and issue list; decoded values stay valid until `deinit`, which must be called exactly once.
 pub fn Result(comptime S: type) type {
     return struct {
         const Self = @This();
@@ -19,6 +22,7 @@ pub fn Result(comptime S: type) type {
         issues: schema.IssueList,
         value: ?S.Value,
 
+        /// Releases the result arena and issue list and invalidates the result; must be called exactly once.
         pub fn deinit(self: *Self) void {
             const child = self.child_allocator;
             self.issues.deinit();
@@ -27,6 +31,7 @@ pub fn Result(comptime S: type) type {
             self.* = undefined;
         }
 
+        /// Returns true when a decoded value is present.
         pub fn ok(self: *const Self) bool {
             return self.value != null;
         }
@@ -38,6 +43,8 @@ pub fn Result(comptime S: type) type {
     };
 }
 
+/// Creates an empty result for schema `S` with a fresh arena and issue list.
+/// Caller owns the result and must call `deinit` exactly once. Returns `OutOfMemory` on allocation failure.
 pub fn newResult(comptime S: type, allocator: std.mem.Allocator) !Result(S) {
     const arena = try allocator.create(std.heap.ArenaAllocator);
     errdefer allocator.destroy(arena);
@@ -55,6 +62,8 @@ pub fn newResult(comptime S: type, allocator: std.mem.Allocator) !Result(S) {
     };
 }
 
+/// Parses `input` as JSON and decodes it with schema `S`.
+/// The returned result owns the arena and issue list; call `deinit` exactly once. Validation failures are reported as issues, not errors.
 pub fn parse(comptime S: type, allocator: std.mem.Allocator, input: []const u8, options: schema.Options) Error!Result(S) {
     var result = try newResult(S, allocator);
     errdefer result.deinit();
@@ -270,8 +279,11 @@ fn findDuplicate(allocator: std.mem.Allocator, input: []const u8) error{OutOfMem
     return null;
 }
 
+/// Encode options for JSON output. Mirrors `schema.EncodeOptions`; `emit_null_fields` controls `null` emission.
 pub const EncodeOptions = schema.EncodeOptions;
 
+/// Encodes `value` as JSON with schema `S` and returns caller-owned text.
+/// Encode callbacks receive a scratch arena released before return; the returned slice does not reference it. Caller frees the slice.
 pub fn stringify(
     comptime S: type,
     allocator: std.mem.Allocator,
@@ -280,8 +292,15 @@ pub fn stringify(
 ) (std.mem.Allocator.Error || std.Io.Writer.Error || error{ Unsupported, TransformFailed })![]u8 {
     var buffer: std.Io.Writer.Allocating = .init(allocator);
     errdefer buffer.deinit();
+
+    // Encode callbacks receive scratch storage that is valid only for this
+    // call. The returned JSON buffer uses the caller's allocator and is
+    // independent of this arena.
+    var scratch = std.heap.ArenaAllocator.init(allocator);
+    defer scratch.deinit();
+
     var json: std.json.Stringify = .{ .writer = &buffer.writer, .options = .{} };
-    var state = schema.EncodeState{ .allocator = allocator, .json = &json, .options = options };
+    var state = schema.EncodeState{ .allocator = scratch.allocator(), .json = &json, .options = options };
     try S.encode(&state, value);
     return buffer.toOwnedSlice();
 }
@@ -323,6 +342,149 @@ test "invalid json and validation errors" {
     try std.testing.expect(!result.ok());
     try std.testing.expectEqual(@as(usize, 1), result.errors().count());
     try std.testing.expectEqualStrings("$", result.errors().first().?.path);
+}
+
+test "invalid utf-8 is rejected as invalid json" {
+    const allocator = std.testing.allocator;
+    const string = @import("string.zig");
+    const Text = string.string(.{});
+    const invalid = [_]u8{ '"', 0xff, 0xfe, '"' };
+    try std.testing.expectError(error.InvalidJson, parse(Text, allocator, &invalid, .{}));
+}
+
+test "depth limit reports unsupported" {
+    const allocator = std.testing.allocator;
+    const model = @import("model.zig");
+    const string = @import("string.zig");
+    const Inner = model.objectOf(.{ .name = string.string(.{}) }, .{});
+    const Outer = model.objectOf(.{ .inner = Inner }, .{});
+
+    var result = try parse(Outer, allocator, "{\"inner\":{\"name\":\"Ada\"}}", .{ .max_depth = 1 });
+    defer result.deinit();
+    try std.testing.expect(!result.ok());
+    try std.testing.expectEqualStrings("E021", result.errors().first().?.code.label());
+}
+
+test "transform encode scratch allocations are released" {
+    const allocator = std.testing.allocator;
+    const string = @import("string.zig");
+    const modifiers = @import("modifiers.zig");
+
+    const Suffixed = modifiers.transform(string.string(.{}), .{
+        .decode = struct {
+            fn apply(_: std.mem.Allocator, value: []const u8) ![]const u8 {
+                return value;
+            }
+        }.apply,
+        .encode = struct {
+            fn apply(pool: std.mem.Allocator, value: []const u8) ![]const u8 {
+                return std.fmt.allocPrint(pool, "{s}!", .{value});
+            }
+        }.apply,
+    });
+
+    const text = try stringify(Suffixed, allocator, "ok", .{});
+    defer allocator.free(text);
+    try std.testing.expectEqualStrings("\"ok!\"", text);
+}
+
+fn parseWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    const string = @import("string.zig");
+    const Model = struct { name: []const u8 };
+    const ModelSchema = @import("model.zig").object(Model, .{
+        .name = string.string(.{ .min = 1 }),
+    }, .{});
+
+    var result = try parse(ModelSchema, allocator, "{\"name\":\"Ada\"}", .{});
+    defer result.deinit();
+    try std.testing.expect(result.ok());
+    try std.testing.expectEqualStrings("Ada", result.value.?.name);
+}
+
+test "parse cleans up at every allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, parseWithAllocationFailures, .{});
+}
+
+test "bidirectional codecs validate both sides" {
+    const allocator = std.testing.allocator;
+    const string = @import("string.zig");
+    const number = @import("number.zig");
+    const modifiers = @import("modifiers.zig");
+
+    const Count = modifiers.codec(string.string(.{}), number.integer(u32, .{ .max = 100 }), .{
+        .decode = struct {
+            fn apply(_: std.mem.Allocator, text: []const u8) !u32 {
+                return std.fmt.parseInt(u32, text, 10);
+            }
+        }.apply,
+        .encode = struct {
+            fn apply(pool: std.mem.Allocator, value: u32) ![]const u8 {
+                return std.fmt.allocPrint(pool, "{d}", .{value});
+            }
+        }.apply,
+    });
+
+    var parsed = try parse(Count, allocator, "\"42\"", .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(u32, 42), parsed.value.?);
+
+    const text = try stringify(Count, allocator, parsed.value.?, .{});
+    defer allocator.free(text);
+    try std.testing.expectEqualStrings("\"42\"", text);
+
+    var too_large = try parse(Count, allocator, "\"101\"", .{});
+    defer too_large.deinit();
+    try std.testing.expect(!too_large.ok());
+}
+
+test "nested codecs, bytes and temporal schemas compose" {
+    const allocator = std.testing.allocator;
+    const string = @import("string.zig");
+    const number = @import("number.zig");
+    const primitive = @import("primitive.zig");
+    const temporal = @import("temporal.zig");
+    const modifiers = @import("modifiers.zig");
+    const model = @import("model.zig");
+
+    const Count = modifiers.codec(string.string(.{}), number.integer(u32, .{ .max = 100 }), .{
+        .decode = struct {
+            fn apply(_: std.mem.Allocator, text: []const u8) !u32 {
+                return std.fmt.parseInt(u32, text, 10);
+            }
+        }.apply,
+        .encode = struct {
+            fn apply(pool: std.mem.Allocator, value: u32) ![]const u8 {
+                return std.fmt.allocPrint(pool, "{d}", .{value});
+            }
+        }.apply,
+    });
+
+    const Payload = struct {
+        label: []const u8,
+        count: u32,
+        day: @import("datetime.zig").Date,
+        digest: []const u8,
+    };
+    const PayloadSchema = model.object(Payload, .{
+        .label = modifiers.meta(string.string(.{ .min = 1 }), .{ .title = "Label" }),
+        .count = Count,
+        .day = temporal.date(.{}),
+        .digest = primitive.bytes(.{ .encoding = .hex, .len = 4 }),
+    }, .{});
+
+    var result = try parse(PayloadSchema, allocator,
+        \\{"label":"item","count":"7","day":"2024-02-29","digest":"deadbeef"}
+    , .{});
+    defer result.deinit();
+    try std.testing.expect(result.ok());
+    try std.testing.expectEqual(@as(u32, 7), result.value.?.count);
+    try std.testing.expectEqual(@as(u8, 29), result.value.?.day.day);
+    try std.testing.expectEqualSlices(u8, &.{ 0xde, 0xad, 0xbe, 0xef }, result.value.?.digest);
+
+    const text = try stringify(PayloadSchema, allocator, result.value.?, .{});
+    defer allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"count\":\"7\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"deadbeef\"") != null);
 }
 
 test "duplicate keys report their nested path" {

@@ -68,8 +68,8 @@ const EventSchema = z.discriminatedUnion(Event, "type", .{
 - `field` names the discriminator key. It is matched before any variant runs.
 - The discriminator stays in the document, so each variant declares it. A
   `z.literal` keeps a document from being accepted by the wrong variant.
-- A missing or non-string discriminator is `E019` at the discriminator path.
-- A string that names no variant is `E020`, with the allowed names as the
+- A missing discriminator is `E019` at the discriminator path.
+- A non-string or unknown discriminator is `E020`, with the allowed names as the
   expected value.
 - Variant names must match the union field names exactly.
 

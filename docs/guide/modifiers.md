@@ -21,18 +21,21 @@ const Even = z.refine(z.integer(u32, .{}), .{ .check = isEven, .message = "must 
 
 | Constructor | Value | Accepts absent key | Accepts JSON `null` |
 | --- | --- | --- | --- |
-| `z.optional(S)` | `?S.Value` | yes | no, unless `S` accepts it |
+| `z.optional(S)` | `?S.Value` | yes | no (rejected before the inner schema runs) |
 | `z.nullable(S)` | `?S.Value` | only when the model field is optional | yes |
-| `z.optional(z.nullable(S))` | `?S.Value` | yes | yes |
+| `z.nullish(S)` | `?S.Value` | yes | yes |
+| `z.optional(z.nullable(S))` | `??S.Value` | yes | yes |
 
 They model different situations. An absent key means "the client did not send
 this field"; a `null` value means "the client explicitly cleared it". Keeping
 them separate lets a `PATCH` endpoint distinguish the two.
 
-`z.optional` rejects an explicit `null` as `E001: invalid type`, because the
-field is present with the wrong value. Use `z.nullable` alone when `null` must
-be accepted but the key must still be present, and combine both when the key is
-optional and `null` is meaningful.
+`z.optional` rejects an explicit `null` as `E001: invalid type` before the
+inner schema runs, because the field is present with the wrong value. Use
+`z.nullable` alone when `null` must be accepted but the key must still be
+present. `z.nullish(S)` accepts both an absent key and `null`; its value is the
+single-optional `?S.Value`, so it is not identical to nesting
+`z.optional(z.nullable(S))`, whose value is `??S.Value`.
 
 ## Defaults
 
@@ -97,12 +100,14 @@ validated value. `.decode` is required and takes
 `(std.mem.Allocator, S.Value) error!Output`.
 
 ```zig
-const Timestamp = z.transform(z.string(.{}), struct {
-    fn decode(arena: std.mem.Allocator, text: []const u8) !i64 {
-        _ = arena;
-        return std.fmt.parseInt(i64, text, 10);
-    }
-}.decode);
+const Timestamp = z.transform(z.string(.{}), .{
+    .decode = struct {
+        fn decode(arena: std.mem.Allocator, text: []const u8) !i64 {
+            _ = arena;
+            return std.fmt.parseInt(i64, text, 10);
+        }
+    }.decode,
+});
 ```
 
 The allocator is the result arena, so a transform may allocate and return
@@ -132,6 +137,50 @@ const Flag = z.transform(z.string(.{}), .{
 Without `.encode`, `encode` reports `error.Unsupported`. Without either
 `.encode` or `.check`, `check` also reports `error.Unsupported` rather than
 silently accepting a value it cannot verify.
+
+## Bidirectional codecs
+
+`z.codec(InputSchema, OutputSchema, .{ .decode = ..., .encode = ... })` is the
+correct tool when the wire type and the application type are both described by
+schemas. Decoding validates the input schema, transforms the value, then
+validates the output schema. Encoding transforms back and serializes through
+the input schema. Unlike `transform`, a codec always has a real reverse path.
+
+```zig
+const Count = z.codec(z.string(.{}), z.integer(u32, .{ .max = 100 }), .{
+    .decode = struct {
+        fn apply(_: std.mem.Allocator, text: []const u8) !u32 {
+            return std.fmt.parseInt(u32, text, 10);
+        }
+    }.apply,
+    .encode = struct {
+        fn apply(pool: std.mem.Allocator, value: u32) ![]const u8 {
+            return std.fmt.allocPrint(pool, "{d}", .{value});
+        }
+    }.apply,
+    .message = "count must be a decimal number",
+});
+```
+
+Both callbacks receive the result arena on decode and the stringify scratch
+arena on encode. The input schema defines the JSON representation; the output
+schema validates the typed result.
+
+## Metadata
+
+`z.meta(S, .{ .title = "...", .description = "...", .examples = &.{...} })`
+attaches documentation metadata without changing `Value` or validation. The
+generated JSON Schema emits `title`, `description`, `examples` and an optional
+`id`. For object schemas, metadata uses `allOf` so the base schema remains
+intact.
+
+```zig
+const Email = z.meta(z.email(.{}), .{
+    .title = "Email address",
+    .description = "Primary contact email",
+    .examples = &.{"ada@example.com"},
+});
+```
 
 ## Lazy schemas
 

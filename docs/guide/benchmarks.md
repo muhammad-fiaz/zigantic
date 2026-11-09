@@ -10,15 +10,17 @@ keywords: zigantic benchmarks, zig json performance, query parsing benchmark, fo
 zig build bench
 ```
 
-The target builds `bench/benchmark.zig` with `ReleaseFast` and measures eleven
-paths:
+The target builds `bench/benchmark.zig` with `ReleaseFast` and measures
+seventeen paths:
 
 - **JSON:** model parsing, nested-object parsing, bounded integer parsing and
   model serialization.
+- **Collections and composition:** record, set, tuple, union and recursive
+  schema parsing.
 - **Query and forms:** query parsing, form parsing and query serialization.
 - **Schema and validation:** JSON Schema generation, typed validation and the
   allocation-free `email` predicate.
-- **Date and time:** offset date-time parsing.
+- **Date and time:** offset date-time and duration parsing.
 
 ## Methodology
 
@@ -45,22 +47,32 @@ zig 0.17.0 | x86_64-windows | ReleaseFast | smp_allocator
 7 measured rounds, 1 warmup round(s); median reported
 
 benchmark                    iterations   median ns/op  min ns/op  max ns/op  ops/sec
-json_model_parse                 20000           954        922       1069   1048218
-json_nested_parse                20000          1056       1043       1311    946969
-integer_parse                   200000           261        250        287   3831417
-json_model_stringify             20000           105        101        111   9523809
-query_model_parse                20000           785        774        901   1273885
-form_model_parse                 20000           681        666        691   1468428
-query_model_stringify            20000           270        268        297   3703703
-json_schema_generate              5000           549        533        968   1821493
-typed_validate                  100000           171        166        202   5847953
-email_validator                1000000            41         40         48  24390243
-datetime_parse                  500000            23         21         23  43478260
+json_model_parse                 20000           905        883        925   1104972
+json_nested_parse                20000          1028       1002       1047    972762
+integer_parse                   200000           254        247        264   3937007
+json_model_stringify             20000           106        102        113   9433962
+query_model_parse                20000           766        750        810   1305483
+form_model_parse                 20000           673        664        676   1485884
+query_model_stringify            20000           244        242        253   4098360
+json_schema_generate              5000           542        534        574   1845018
+typed_validate                  100000           160        159        164   6250000
+email_validator                1000000            36         35         37  27777777
+datetime_parse                  500000            23         23         25  43478260
+record_parse                     20000           915        910        928   1092896
+set_parse                        20000           683        670        714   1464128
+tuple_parse                      20000           631        626        641   1584786
+union_parse                      20000           673        669        686   1485884
+recursive_parse                  10000          1006        977       1039    994035
+duration_parse                  500000            18         17         18  55555555
+
+json_model_parse allocation profile: 9 allocations, 6922 bytes, 4 deallocations
 ```
 
 These numbers are a snapshot, not a guarantee. Hardware, allocator, build mode
 and Zig version all matter, so reproduce them locally before drawing
 conclusions. The min and max columns show the spread across measured rounds.
+The benchmark harness also reports a one-shot allocation profile for the user
+model parse; on the same machine it recorded 9 allocations totaling 6922 bytes.
 
 ## What dominates the cost
 
@@ -70,6 +82,18 @@ conclusions. The min and max columns show the spread across measured rounds.
 - **Nested parsing** adds a second object map, path construction and an
   additional field pass, which is why it is measurably slower than the flat
   model.
+- **Records** add map growth and ordered key extraction on top of the same
+  per-field checks as flat objects.
+- **Sets** pay for the schema decode plus an O(n²) uniqueness comparison across
+  already-decoded strings.
+- **Tuples** decode position by position with no key lookup, making them
+  cheaper than records.
+- **Unions** select variants by tag comparison before validation, so a
+  discriminated union costs little more than a single object decode.
+- **Recursive schemas** decode through `lazy` slots, so each level pays for an
+  arena allocation for the node value.
+- **Duration parsing** is allocation-free like date-time parsing and only
+  scans the component text.
 - **Integer parsing** is already close to the floor for this API: it still
   creates a result arena and issue list even though the payload is one byte.
 - **Serialization** writes directly into an allocating writer without building

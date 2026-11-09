@@ -10,6 +10,7 @@ const SchemaError = schema.SchemaError;
 const EncodeState = schema.EncodeState;
 const SchemaState = schema.SchemaState;
 
+/// Configuration for union schemas; holds optional JSON Schema description.
 pub const UnionConfig = struct {
     description: []const u8 = "",
 };
@@ -53,6 +54,11 @@ fn validate(comptime U: type, comptime variants: anytype) void {
         switch (@typeInfo(U)) {
             .@"union" => |info| {
                 if (info.tag_type == null) @compileError("union schemas require a tagged union");
+                for (info.field_names) |name| {
+                    if (!@hasField(@TypeOf(variants), name)) {
+                        @compileError("union field '" ++ name ++ "' has no schema variant");
+                    }
+                }
             },
             else => @compileError("union schema requires a union type, got " ++ @typeName(U)),
         }
@@ -69,7 +75,10 @@ fn validate(comptime U: type, comptime variants: anytype) void {
     }
 }
 
-/// Tries each variant in declaration order and returns the first that decodes.
+/// Creates a tagged-union schema with order semantics: variants try in declaration order.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+/// Each variant schema Value must match the corresponding union field; mismatch fails at compile time.
+/// Decode rolls back failed variants and reports union mismatch if none succeed.
 pub fn unionOf(comptime U: type, comptime variants: anytype, comptime config: UnionConfig) type {
     validate(U, variants);
     const info = @typeInfo(@TypeOf(variants)).@"struct";
@@ -133,6 +142,7 @@ pub fn unionOf(comptime U: type, comptime variants: anytype, comptime config: Un
     };
 }
 
+/// Configuration for discriminated unions; holds optional JSON Schema description.
 pub const DiscriminatedConfig = struct {
     description: []const u8 = "",
 };
@@ -148,8 +158,10 @@ fn discriminatorNode(node: std.json.Value, comptime key: []const u8) ?std.json.V
     return null;
 }
 
-/// Selects a variant through a string discriminator field, then validates the
-/// whole object against that variant's schema.
+/// Creates a discriminated-union schema selected by string field `field`.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+/// Missing discriminator reports E019; non-string or unknown tag reports E020.
+/// The selected variant then decodes the whole object; check/encode dispatch per variant.
 pub fn discriminatedUnion(
     comptime U: type,
     comptime field: []const u8,

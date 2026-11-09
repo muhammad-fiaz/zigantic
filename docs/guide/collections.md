@@ -6,9 +6,11 @@ keywords: zigantic array schema, record schema, unique array, string keyed map, 
 
 # Collections
 
-`z.array` covers ordered lists, `z.record` covers string-keyed maps and
-`z.tuple` covers fixed heterogeneous arrays. This page documents the first two;
-see [Inferred Objects, Tuples & Intersections](/guide/inference) for tuples.
+`z.array` covers ordered lists, `z.record` covers string-keyed maps,
+`z.fixedArray` fixes the element count in the type, `z.set` stores ordered
+unique values, and `z.tuple` covers fixed heterogeneous arrays. This page
+documents the first four; see
+[Inferred Objects, Tuples & Intersections](/guide/inference) for tuples.
 
 ## Arrays
 
@@ -36,6 +38,28 @@ Failures use `E002` (too few), `E003` (too many), `E004` (exact length) and
 
 Uniqueness compares decoded values, so `1`, `1.0` and `"1"` are distinct if the
 item schema produces different types, while two identical strings collide.
+Comparison is `schema.valuesEqual`: strings by content, other values with
+`std.meta.eql` (IEEE `==` for floats). Two consequences follow: `-0.0` and
+`+0.0` collide (they compare equal), while two `NaN`s never collide (`NaN !=
+NaN`). Nested arrays and structs compare element-wise with the same rules.
+
+The fixed-array container itself is stack-inline, so it adds no allocation for
+the container — but decoding elements that own memory (strings, maps, nested
+slices) still allocates in the result arena like any other collection.
+
+## Fixed arrays and sets
+
+`z.fixedArray(S, N, .{})` produces `[N]S.Value` and always rejects a document
+whose array length is not exactly `N`. `z.set(S, .{})` produces `[]const
+S.Value`, preserves input order and rejects duplicates. `z.set` accepts the
+same `z.ArrayConfig` options as `z.array` (and always sets `unique = true`).
+`z.fixedArray` accepts only `z.FixedConfig` (a single `description` field);
+its length comes from the `N` parameter, not from a `len`/`min`/`max` option.
+
+```zig
+const Point = z.fixedArray(z.float(f64, .{}), 3, .{});
+const Tags = z.set(z.string(.{ .min = 1 }), .{ .max = 8 });
+```
 
 ## Records
 
@@ -50,7 +74,9 @@ const Scores = z.record(z.integer(u16, .{ .max = 1000 }), .{
 
 `z.record(S, .{})` produces `std.array_hash_map.String(S.Value)`, which
 preserves insertion order. Keys are copied into the result arena; values are
-decoded with `S`.
+decoded with `S`. The map, its keys and its values are all owned by the
+`ParseResult` arena: do not call `map.deinit(allocator)` on a decoded record;
+`result.deinit()` releases everything once.
 
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -60,8 +86,9 @@ decoded with `S`.
 | `key_max` | `usize` | `256` | maximum key length in bytes |
 | `description` | `[]const u8` | `""` | JSON Schema description |
 
-`min`/`max` map to `minProperties`/`maxProperties` in generated JSON Schema.
-Key length failures are `E004`; entry count failures are `E002`/`E003`.
+`min`/`max` map to `minProperties`/`maxProperties` in generated JSON Schema,
+and key length limits map to `propertyNames`. Key length failures are `E004`;
+entry count failures are `E002`/`E003`.
 
 ## Encoding
 

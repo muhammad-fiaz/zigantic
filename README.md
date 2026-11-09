@@ -16,7 +16,7 @@
 <a href="https://pay.muhammadfiaz.com"><img src="https://img.shields.io/badge/Sponsor-pay.muhammadfiaz.com-ff69b4?style=flat&logo=heart" alt="Sponsor"></a>
 <a href="https://github.com/sponsors/muhammad-fiaz"><img src="https://img.shields.io/badge/Sponsor-GitHub-pink?style=social&logo=github" alt="GitHub Sponsors"></a>
 <a href="https://hits.sh/github.com/muhammad-fiaz/zigantic/"><img alt="Hits" src="https://hits.sh/github.com/muhammad-fiaz/zigantic.svg"/></a>
-<p><em>A fast, compile-time schema validation and data parsing library for Zig.</em></p>
+<p><em>Compile-time schema validation and data parsing for Zig.</em></p>
 
 <b><a href="https://muhammad-fiaz.github.io/zigantic/">Documentation</a> |
 <a href="https://muhammad-fiaz.github.io/zigantic/api/reference.html">API Reference</a> |
@@ -26,10 +26,10 @@
 
 </div>
 
-A fast, compile-time schema validation and data parsing library for Zig, featuring type-safe schema composition, zero-allocation validation, and explicit memory management.
-
-> [!TIP]
-> If you build with zigantic, make sure to give it a star ⭐.
+Compile-time schema validation, parsing, transformation and serialization for
+Zig 0.17. Schemas are types, so composition and incompatibility are checked by
+the compiler. All allocation is explicit: parsed values live in a per-result
+arena released by `deinit`, and no hidden allocator is used.
 
 <details>
 <summary><strong>Table of Contents</strong> (click to expand)</summary>
@@ -48,39 +48,6 @@ A fast, compile-time schema validation and data parsing library for Zig, featuri
 ---
 
 <details>
-<summary><strong>Related Zig Projects</strong> (click to expand)</summary>
-
-- For **environment variables and `.env` parsing**, check out [env.zig](https://github.com/muhammad-fiaz/env.zig).
-- For **TUI (Terminal User Interface)** support, check out [tui.zig](https://github.com/muhammad-fiaz/tui.zig).
-- For **ZON file format** support, check out [zon.zig](https://github.com/muhammad-fiaz/zon.zig).
-- For **spinners, loading indicators, and progress bars**, check out [loaders.zig](https://github.com/muhammad-fiaz/loaders.zig).
-- For **terminal colors and text styling**, check out [tint.zig](https://github.com/muhammad-fiaz/tint.zig).
-- For **Model Context Protocol (MCP)** support, check out [mcp.zig](https://github.com/muhammad-fiaz/mcp.zig).
-- For **API framework** support, check out [api.zig](https://github.com/muhammad-fiaz/api.zig).
-- For **web framework** support, check out [zix](https://github.com/muhammad-fiaz/zix).
-- For **archive handling and compression**, check out [archive.zig](https://github.com/muhammad-fiaz/archive.zig).
-- For **compression file formats**, check out [zigx](https://github.com/muhammad-fiaz/zigx).
-- For **CUDA** support, check out [cuda.zig](https://github.com/muhammad-fiaz/cuda.zig).
-- For **simplified `build.zig` configuration**, check out [buildx.zig](https://github.com/muhammad-fiaz/buildx.zig).
-- For **SQLite with a Zig-native implementation**, check out [sqlite.zig](https://github.com/muhammad-fiaz/sqlite.zig).
-- For **file downloading**, check out [downloader.zig](https://github.com/muhammad-fiaz/downloader.zig).
-- For **update checking and automatic updates**, check out [updater.zig](https://github.com/muhammad-fiaz/updater.zig).
-- For **numerical computing**, check out [num.zig](https://github.com/muhammad-fiaz/num.zig).
-- For **logging**, check out [logly.zig](https://github.com/muhammad-fiaz/logly.zig).
-- For **data validation and serialization**, check out [zigantic](https://github.com/muhammad-fiaz/zigantic).
-- For **UUID** support, check out [uuid.zig](https://github.com/muhammad-fiaz/uuid.zig).
-- For **key-value database** support, check out [zkv.zig](https://github.com/muhammad-fiaz/zkv.zig).
-- For **terminal colors and text styling**, check out [hint.zig](https://github.com/muhammad-fiaz/hint.zig).
-- For **Brotli compression**, check out [brotli.zig](https://github.com/muhammad-fiaz/brotli.zig).
-- For **Zstandard (Zstd) compression**, check out [zstd.zig](https://github.com/muhammad-fiaz/zstd.zig).
-- For **Tree-sitter** integration, check out [tree-sitter.zig](https://github.com/muhammad-fiaz/tree-sitter.zig).
-- For **regular expressions**, check out [regex.zig](https://github.com/muhammad-fiaz/regex.zig).
-
-</details>
-
----
-
-<details>
 <summary><strong>Features</strong> (click to expand)</summary>
 
 | Feature | Description |
@@ -88,20 +55,20 @@ A fast, compile-time schema validation and data parsing library for Zig, featuri
 | **Schemas as types** | Every constructor returns a type exposing `Value`, `kind`, `decode`, `check`, `encode` and `writeJsonSchema`. Composition is resolved at compile time. |
 | **Declared models** | `z.object(Model, fields, .{})` binds to a real Zig struct. Unknown fields, type mismatches and uncovered required fields fail the build. |
 | **Inferred models** | `z.objectOf(fields, .{})` synthesizes the model with `@Struct`; `z.tuple` uses `@Tuple`; `z.intersection` checks several schemas against one value. |
-| **Primitives** | Strings with length, prefix, suffix, contains, trim, case and charset rules; integers with bounds, even and multiple-of checks; floats with bounds and finiteness; booleans, enums, literals and null. |
+| **Primitives** | Strings with length, prefix, suffix, contains, trim, case and charset rules; integers and floats with inclusive/exclusive bounds, multiple-of, finiteness and numeric presets; booleans, enums, literals, null, temporal schemas and binary data. |
 | **Built-in formats** | Email, URL, HTTPS URL, UUID, ULID, slug, semantic version, phone number, payment card (Luhn), JWT, base64/base64url, hex, hex colour, MAC address, IPv4, IPv6, ISO date, time, date-time and duration. |
 | **Objects** | snake_case, camelCase, kebab-case, PascalCase and upper/lower naming policies; field aliases; strict or strip unknown fields; partial models; model defaults. |
-| **Collections** | Arrays with minimum, maximum, exact length and uniqueness rules; records backed by `std.array_hash_map.String` with entry and key-length limits. |
+| **Collections** | Arrays with minimum, maximum, exact length and uniqueness rules; fixed-length arrays; ordered unique sets; tuples; records backed by `std.array_hash_map.String` with entry and key-length limits. |
 | **Unions** | Untagged unions with declaration-order selection, and discriminated unions with literal tags and precise missing/invalid discriminator errors. |
-| **Modifiers** | `optional` (absent) and `nullable` (explicit null) kept distinct, compile-time defaults and factories, tolerant fallbacks, refinements, reversible allocation-aware transforms, recursive lazy schemas and typed custom checks. |
+| **Modifiers** | `optional` (absent), `nullable` (explicit null) and `nullish` kept distinct; defaults, factories, fallbacks, refinements, reversible transforms and bidirectional codecs, metadata, recursive lazy schemas and typed custom checks with multiple issues. |
 | **JSON** | `z.parse` and `z.stringify` build on `std.json`, with duplicate-key policy, unknown-field policy, depth limits and coercion opt-in. |
 | **Query strings and forms** | `z.parseQuery`, `z.parseForm` and `z.stringifyQuery` reuse the object schema, enable text coercion, accept nested `a[b]` keys and turn repeated keys into arrays. |
-| **JSON Schema** | `z.jsonSchema` emits types, bounds, formats, `required`, `additionalProperties`, and deduplicated `$defs`/`$ref` entries for recursive schemas. |
+| **JSON Schema** | `z.jsonSchema` emits types, bounds, formats, `required`, `additionalProperties`, metadata, and deduplicated definitions/references for recursive schemas, targeting Draft 2020-12, 2019-09, 7, 6 or 5. |
 | **Date and time** | `z.Date`, `z.Time` and `z.DateTime` parse, format and do calendar-correct arithmetic (leap years, month clamping, fixed UTC offsets) without allocating. |
 | **Structured errors** | Stable codes and categories, JSONPath-style paths, expected/received text, text or JSON rendering, per-call message overrides and lifecycle hooks. |
-| **Typed validation** | `z.validate(S, allocator, value, .{})` checks an already-typed value and returns an owning issue list. No validator session, no `init`/`deinit` pair. |
+| **Typed validation** | `z.validate(S, allocator, value, .{})` returns an owning issue list; `z.checkFirst(S, value, buffer, .{})` reports the first issue using caller scratch memory without heap allocation. |
 | **Optional colour** | Error rendering accepts tint capabilities per call: `.none` by default, or `.ansi16`, `.ansi256` and `.trueColor`. Redirected output stays plain. |
-| **Predictable ownership** | No hidden allocations during predicate checks; every decoded allocation belongs to the result arena; issues own copies of their strings. |
+| **Predictable ownership** | No hidden allocations during predicate checks; every decoded allocation belongs to the result arena; issues own copies of their strings; stringify uses a scratch arena for transform encoders. |
 | **Cross-platform** | Pure Zig with no system libraries. Builds and tests on Linux, Windows and macOS, including cross-compiled targets. |
 
 </details>
@@ -129,28 +96,26 @@ A fast, compile-time schema validation and data parsing library for Zig, featuri
 ## Supported Platforms
 
 | Platform | x86_64 (64-bit) | aarch64 (ARM64) | x86 (32-bit) |
-|----------|-----------------|-----------------|--------------|
+|----------|:---------------:|:---------------:|:------------:|
 | **Linux** | Yes | Yes | Yes |
 | **Windows** | Yes | Yes | Yes |
 | **macOS** | Yes | Yes (Apple Silicon) | Yes |
 
-The library only uses `std`, so any target supported by Zig can host it.
-CI cross-compiles and, where the target can run, executes the full test suite.
+The core library depends only on the Zig standard library. All formats are
+textual, so behavior is identical on little- and big-endian targets, and no
+64-bit size assumption is made.
 
 ### Cross-Compilation
 
 ```bash
-# Build for Linux ARM64 from Windows
-zig build -Dtarget=aarch64-linux
-
-# Build for Windows from Linux
-zig build -Dtarget=x86_64-windows
-
-# Build for macOS Apple Silicon from Linux
-zig build -Dtarget=aarch64-macos
-
-# Run tests under QEMU
+# Build and run tests for Linux ARM64 (QEMU required)
 zig build test -Dtarget=aarch64-linux-musl -fqemu
+
+# Build for Windows 32-bit from Linux
+zig build test -Dtarget=x86-windows
+
+# Build tests for macOS Apple Silicon from Linux
+zig build test -Dtarget=aarch64-macos -fqemu
 ```
 
 </details>
@@ -161,10 +126,10 @@ zig build test -Dtarget=aarch64-linux-musl -fqemu
 
 ### Method 1: Zig Fetch (Recommended)
 
-**Latest Release (v0.0.4)**
+**Latest Release (v0.0.5)**
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.4.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.5.tar.gz
 ```
 
 > [!NOTE]
@@ -193,7 +158,7 @@ zig fetch --save git+https://github.com/muhammad-fiaz/zigantic.git
 ```zig
 .dependencies = .{
     .zigantic = .{
-        .url = "https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.4.tar.gz",
+        .url = "https://github.com/muhammad-fiaz/zigantic/archive/refs/tags/0.0.5.tar.gz",
         .hash = "...", // Run `zig fetch --save <url>` to generate the hash.
     },
 },
@@ -290,17 +255,17 @@ pub fn main() !void {
 
 Output:
 
-```text
+```bash
 Ada <ada@example.com> in London
 {"name":"Ada","email":"ada@example.com","age":36,"address":{"city":"London","postal_code":"12345"}}
 ```
 
 A failed document produces structured issues instead of an error return:
 
-```text
+```bash
 error[E002]: value is too small
   $.age
-    expected: 18..120
+    expected: 18..255
     received: 12
 ```
 
@@ -332,17 +297,23 @@ reports the median latency and throughput derived from it.
 
 | Benchmark | Area | Median Latency | Throughput |
 | :--- | :--- | ---: | ---: |
-| `json_model_parse` | JSON | 954 ns/op | **1,048,218 ops/sec** |
-| `json_nested_parse` | JSON | 1,056 ns/op | **946,969 ops/sec** |
-| `integer_parse` | JSON | 261 ns/op | **3,831,417 ops/sec** |
-| `json_model_stringify` | JSON | 105 ns/op | **9,523,809 ops/sec** |
-| `query_model_parse` | Query | 785 ns/op | **1,273,885 ops/sec** |
-| `form_model_parse` | Forms | 681 ns/op | **1,468,428 ops/sec** |
-| `query_model_stringify` | Query | 270 ns/op | **3,703,703 ops/sec** |
-| `json_schema_generate` | Schema | 549 ns/op | **1,821,493 ops/sec** |
-| `typed_validate` | Validation | 171 ns/op | **5,847,953 ops/sec** |
-| `email_validator` | Validation | 41 ns/op | **24,390,243 ops/sec** |
+| `json_model_parse` | JSON | 905 ns/op | **1,104,972 ops/sec** |
+| `json_nested_parse` | JSON | 1,028 ns/op | **972,762 ops/sec** |
+| `integer_parse` | JSON | 254 ns/op | **3,937,007 ops/sec** |
+| `json_model_stringify` | JSON | 106 ns/op | **9,433,962 ops/sec** |
+| `query_model_parse` | Query | 766 ns/op | **1,305,483 ops/sec** |
+| `form_model_parse` | Forms | 673 ns/op | **1,485,884 ops/sec** |
+| `query_model_stringify` | Query | 244 ns/op | **4,098,360 ops/sec** |
+| `json_schema_generate` | Schema | 542 ns/op | **1,845,018 ops/sec** |
+| `typed_validate` | Validation | 160 ns/op | **6,250,000 ops/sec** |
+| `email_validator` | Validation | 36 ns/op | **27,777,777 ops/sec** |
 | `datetime_parse` | Date & Time | 23 ns/op | **43,478,260 ops/sec** |
+| `record_parse` | Collections | 915 ns/op | **1,092,896 ops/sec** |
+| `set_parse` | Collections | 683 ns/op | **1,464,128 ops/sec** |
+| `tuple_parse` | Collections | 631 ns/op | **1,584,786 ops/sec** |
+| `union_parse` | Unions | 673 ns/op | **1,485,884 ops/sec** |
+| `recursive_parse` | Recursive | 1,006 ns/op | **994,035 ops/sec** |
+| `duration_parse` | Date & Time | 18 ns/op | **55,555,555 ops/sec** |
 
 Operations that return owned data create and free their result, so those numbers
 include arena allocation, copying and cleanup. The predicate and date-time

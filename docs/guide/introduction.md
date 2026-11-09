@@ -77,17 +77,18 @@ rules and examples.
 ## Complete schema surface
 
 - Objects: `z.object` for declared models and `z.objectOf` for inferred ones,
-  with naming policies, aliases, unknown-field policy and defaults.
-- Collections: `z.array` with length and uniqueness constraints, and
-  `z.record` backed by `std.array_hash_map.String`.
+  with naming policies, aliases, unknown-field policy and defaults; `z.merge`,
+  `z.extend`, `z.pick` and `z.omit` compose inferred field sets.
+- Collections: `z.array`, `z.fixedArray`, `z.set`, `z.record` and `z.tuple`.
 - Products and sums: `z.tuple`, `z.intersection`, `z.unionOf` and
   `z.discriminatedUnion`.
-- Primitives: strings and formats, integers, floats, booleans, enums, literals
-  and null.
-- Modifiers: `optional`, `nullable`, `withDefault`, `withDefaultFactory`,
-  `fallback`, `refine`, `transform`, `lazy` and `custom`.
+- Primitives: strings and formats, integers, floats, booleans, enums, literals,
+  null, `z.bytes` and temporal schemas.
+- Modifiers: `optional`, `nullable`, `nullish`, `withDefault`,
+  `withDefaultFactory`, `fallback`, `refine`, `meta`, `transform`, `codec`,
+  `lazy` and `custom`.
 - Wire services: `z.parse`, `z.stringify`, `z.parseQuery`, `z.parseForm`,
-  `z.stringifyQuery`, `z.validate` and `z.jsonSchema`.
+  `z.stringifyQuery`, `z.validate`, `z.checkFirst` and `z.jsonSchema`.
 - Date and time: `z.Date`, `z.Time` and `z.DateTime` for calendar arithmetic
   after the ISO 8601 string schemas validate the wire text.
 
@@ -95,9 +96,17 @@ rules and examples.
 
 Validation predicates allocate nothing. Decoding allocates from a per-result
 arena owned by the caller's allocator; `ParseResult.deinit` frees everything.
-The library never opens files, reads environment variables or keeps global
-configuration. Every service takes a trailing options value, and every
-allocation is visible in its signature.
+`z.checkFirst` validates typed values with caller scratch memory and no heap
+allocation. `z.stringify` creates one scratch arena for transform encoders and
+releases it before returning the caller-owned buffer.
+
+Borrowed input slices stay valid only while the source document lives. Decoded
+strings, collections and records are owned by the result arena; issue paths and
+messages are owned by the issue list. The library never opens files, reads
+environment variables or keeps global configuration. Every service takes a
+trailing options value, and every allocation is visible in its signature. See
+[Ownership & Allocators](/guide/ownership) for the full allocation matrix and
+failure-path rules.
 
 ## Composition and wire boundaries
 
@@ -114,6 +123,20 @@ serializable. Query serialization traverses objects, records, tuples, arrays,
 intersections, lazy nodes and scalar leaves; unions, transforms without a query
 form and custom values return `error.Unsupported` instead of emitting
 incomplete text.
+
+## Known limitations
+
+- JSON Schema output targets Draft 2020-12, Draft 2019-09, Draft 7, Draft 6
+  and Draft 5. OpenAPI 3.0 output and JSON Schema import are not implemented.
+- `multipart/form-data` parsing is not implemented; URL-encoded forms are.
+- Pattern validation uses the built-in formats and string predicates. A general
+  regular-expression engine is not bundled to keep the package dependency-free.
+- Objects reject or strip unknown keys. Preserving unknown keys would need an
+  explicit model field and is not automatic.
+- Tuples have fixed arity; variadic tuples are not implemented.
+- Records use string keys. Maps with arbitrary key types are not implemented.
+- String lengths and format checks operate on bytes and ASCII, not grapheme
+  clusters or full Unicode normalization.
 
 ## What it is not
 

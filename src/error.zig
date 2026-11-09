@@ -6,6 +6,8 @@
 
 const std = @import("std");
 
+/// Failure classification for validation. See `Code` for the stable label,
+/// default message, and category. No allocation or I/O involved.
 pub const ValidationError = error{
     TypeMismatch,
     TooSmall,
@@ -30,6 +32,8 @@ pub const ValidationError = error{
     Unsupported,
 };
 
+/// Grouping of codes for programmatic handling. Values are a closed set;
+/// each `Code` maps to exactly one category via `category`.
 pub const Category = enum {
     type_mismatch,
     length,
@@ -41,6 +45,8 @@ pub const Category = enum {
     unsupported,
 };
 
+/// Stable identifier for a failure class. `label` is the `E###` form;
+/// messages and categories derive from it. Never fails.
 pub const Code = enum {
     type_mismatch,
     too_small,
@@ -64,6 +70,7 @@ pub const Code = enum {
     invalid_discriminator,
     unsupported,
 
+    /// Stable `E###` identifier (for example `E001`). Constant string, no allocation.
     pub fn label(self: Code) []const u8 {
         return switch (self) {
             .type_mismatch => "E001",
@@ -90,6 +97,7 @@ pub const Code = enum {
         };
     }
 
+    /// Group of the code (type, length, range, format, structure, etc.). No allocation or failure.
     pub fn category(self: Code) Category {
         return switch (self) {
             .type_mismatch, .not_integer => .type_mismatch,
@@ -104,6 +112,7 @@ pub const Code = enum {
         };
     }
 
+    /// Default human-readable message for the code. Static string, never fails.
     pub fn message(self: Code) []const u8 {
         return switch (self) {
             .type_mismatch => "invalid type",
@@ -137,6 +146,7 @@ const no_message: ?[]const u8 = null;
 /// built-in message).
 pub const Messages = std.enums.EnumFieldStruct(Code, ?[]const u8, no_message);
 
+/// Maps a `ValidationError` to its `Code`. Pure, total mapping with no failure.
 pub fn codeFor(err: ValidationError) Code {
     return switch (err) {
         error.TypeMismatch => .type_mismatch,
@@ -181,9 +191,40 @@ test "codes are stable and unique" {
     const codes = std.enums.values(Code);
     try std.testing.expectEqual(@as(usize, 21), codes.len);
     for (codes, 0..) |code, i| {
+        try std.testing.expect(code.label().len == 4);
+        try std.testing.expect(code.message().len > 0);
         for (codes[i + 1 ..]) |other| {
             try std.testing.expect(!std.mem.eql(u8, code.label(), other.label()));
         }
+    }
+}
+
+test "every validation error maps to a distinct code" {
+    const pairs = [_]struct { err: ValidationError, code: Code }{
+        .{ .err = error.TypeMismatch, .code = .type_mismatch },
+        .{ .err = error.TooSmall, .code = .too_small },
+        .{ .err = error.TooLarge, .code = .too_large },
+        .{ .err = error.LengthMismatch, .code = .length_mismatch },
+        .{ .err = error.InvalidValue, .code = .invalid_value },
+        .{ .err = error.InvalidFormat, .code = .invalid_format },
+        .{ .err = error.MissingField, .code = .missing_field },
+        .{ .err = error.UnknownField, .code = .unknown_field },
+        .{ .err = error.DuplicateField, .code = .duplicate_field },
+        .{ .err = error.NotInEnum, .code = .not_in_enum },
+        .{ .err = error.InvalidLiteral, .code = .invalid_literal },
+        .{ .err = error.RefinementFailed, .code = .refinement_failed },
+        .{ .err = error.TransformFailed, .code = .transform_failed },
+        .{ .err = error.CoercionFailed, .code = .coercion_failed },
+        .{ .err = error.UnionMismatch, .code = .union_mismatch },
+        .{ .err = error.OutOfRange, .code = .out_of_range },
+        .{ .err = error.NotFinite, .code = .not_finite },
+        .{ .err = error.NotInteger, .code = .not_integer },
+        .{ .err = error.MissingDiscriminator, .code = .missing_discriminator },
+        .{ .err = error.InvalidDiscriminator, .code = .invalid_discriminator },
+        .{ .err = error.Unsupported, .code = .unsupported },
+    };
+    for (pairs) |pair| {
+        try std.testing.expectEqual(pair.code, codeFor(pair.err));
     }
 }
 

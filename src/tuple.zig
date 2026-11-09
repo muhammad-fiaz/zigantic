@@ -13,10 +13,15 @@ const SchemaError = schema.SchemaError;
 const EncodeState = schema.EncodeState;
 const SchemaState = schema.SchemaState;
 
+/// Configuration for tuple schemas; holds optional JSON Schema description.
 pub const Config = struct {
     description: []const u8 = "",
 };
 
+/// Creates a fixed-length tuple schema with Value = @Tuple of element schema Values.
+/// Returned schema provides Value, kind, decode, check, encode, and writeJsonSchema.
+/// Input must be a JSON array of exact element count; each position decodes via its schema.
+/// Length mismatches report immediately; element errors carry their index path.
 pub fn tuple(comptime schemas: anytype, comptime config: Config) type {
     const info = @typeInfo(@TypeOf(schemas)).@"struct";
     const count = info.field_names.len;
@@ -100,14 +105,25 @@ pub fn tuple(comptime schemas: anytype, comptime config: Config) type {
             try state.json.beginObject();
             try state.json.objectField("type");
             try state.json.write("array");
-            try state.json.objectField("prefixItems");
-            try state.json.beginArray();
-            inline for (info.field_names) |name| {
-                try @field(schemas, name).writeJsonSchema(state);
+            if (state.target.usesPrefixItems()) {
+                try state.json.objectField("prefixItems");
+                try state.json.beginArray();
+                inline for (info.field_names) |name| {
+                    try @field(schemas, name).writeJsonSchema(state);
+                }
+                try state.json.endArray();
+                try state.json.objectField("items");
+                try state.json.write(false);
+            } else {
+                try state.json.objectField("items");
+                try state.json.beginArray();
+                inline for (info.field_names) |name| {
+                    try @field(schemas, name).writeJsonSchema(state);
+                }
+                try state.json.endArray();
+                try state.json.objectField("additionalItems");
+                try state.json.write(false);
             }
-            try state.json.endArray();
-            try state.json.objectField("items");
-            try state.json.write(false);
             try state.json.objectField("minItems");
             try state.json.write(count);
             try state.json.objectField("maxItems");
