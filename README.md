@@ -1,5 +1,7 @@
 <div align="center">
-<img src="docs/public/cover.png" alt="zigantic logo" width="400" />
+
+<img alt="logo" src="https://github.com/user-attachments/assets/937edc35-81a9-4f34-ae80-518298ef0099" />
+
 
 <a href="https://muhammad-fiaz.github.io/zigantic/"><img src="https://img.shields.io/badge/docs-muhammad--fiaz.github.io-blue" alt="Documentation"></a>
 <a href="https://ziglang.org/"><img src="https://img.shields.io/badge/Zig-0.17.0-orange.svg?logo=zig" alt="Zig Version"></a>
@@ -13,8 +15,7 @@
 <a href="https://github.com/muhammad-fiaz/zigantic/releases/latest"><img src="https://img.shields.io/github/v/release/muhammad-fiaz/zigantic?label=Latest%20Release&style=flat-square" alt="Latest Release"></a>
 <a href="https://pay.muhammadfiaz.com"><img src="https://img.shields.io/badge/Sponsor-pay.muhammadfiaz.com-ff69b4?style=flat&logo=heart" alt="Sponsor"></a>
 <a href="https://github.com/sponsors/muhammad-fiaz"><img src="https://img.shields.io/badge/Sponsor-GitHub-pink?style=social&logo=github" alt="GitHub Sponsors"></a>
-<a href="https://hits.sh/muhammad-fiaz/zigantic/"><img src="https://hits.sh/muhammad-fiaz/zigantic.svg?label=Visitors&extraCount=0&color=green" alt="Repo Visitors"></a>
-
+<a href="https://hits.sh/github.com/muhammad-fiaz/zigantic/"><img alt="Hits" src="https://hits.sh/github.com/muhammad-fiaz/zigantic.svg"/></a>
 <p><em>A fast, compile-time schema validation and data parsing library for Zig.</em></p>
 
 <b><a href="https://muhammad-fiaz.github.io/zigantic/">Documentation</a> |
